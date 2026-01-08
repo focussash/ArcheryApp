@@ -5,13 +5,12 @@ import android.graphics.PointF
 import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -28,7 +27,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,7 +37,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.TextStyle
@@ -57,6 +54,7 @@ import com.example.archeryapp.detection.opencv.OpenCvTargetDetector
 import com.example.archeryapp.domain.scoring.ScoreCalculator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.math.min
 
 private const val TAG = "ReviewScreen"
 
@@ -64,17 +62,15 @@ private const val TAG = "ReviewScreen"
 fun ReviewScreen(
     capturedImage: Bitmap,
     onConfirm: (ScoringResult) -> Unit,
+    onEditArrows: (TargetDetection, List<ArrowDetection>) -> Unit,
     onRetake: () -> Unit
 ) {
     var isProcessing by remember { mutableStateOf(true) }
     var targetDetection by remember { mutableStateOf<TargetDetection?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val arrowDetections = remember { mutableStateListOf<ArrowDetection>() }
-    var selectedArrowIndex by remember { mutableIntStateOf(-1) }
     var imageWidth by remember { mutableFloatStateOf(0f) }
     var imageHeight by remember { mutableFloatStateOf(0f) }
-    var displayWidth by remember { mutableFloatStateOf(0f) }
-    var displayHeight by remember { mutableFloatStateOf(0f) }
 
     val scoreCalculator = remember { ScoreCalculator() }
 
@@ -88,7 +84,6 @@ fun ReviewScreen(
 
             Log.d(TAG, "Processing image: ${imgWidth}x${imgHeight}")
 
-            // Try to detect target with OpenCV on IO thread
             val target = withContext(Dispatchers.IO) {
                 try {
                     val targetDetector = OpenCvTargetDetector()
@@ -103,7 +98,6 @@ fun ReviewScreen(
                 Log.d(TAG, "Target detected: center=(${target.center.x}, ${target.center.y}), radius=${target.radius}")
                 targetDetection = target
 
-                // Try to detect arrows on IO thread
                 val arrows = withContext(Dispatchers.IO) {
                     try {
                         val arrowDetector = OpenCvArrowDetector()
@@ -119,31 +113,28 @@ fun ReviewScreen(
                 Log.d(TAG, "Detected ${arrows.size} arrows")
             } else {
                 Log.w(TAG, "No target detected - creating default target at image center")
-                // Create a default target at center of image for manual scoring
                 val defaultTarget = TargetDetection(
                     center = PointF(imgWidth / 2f, imgHeight / 2f),
                     radius = minOf(imgWidth, imgHeight) / 2.5f,
                     confidence = 0f
                 )
                 targetDetection = defaultTarget
-                errorMessage = "Target not auto-detected. Tap to add arrows manually."
+                errorMessage = "Target not auto-detected. Use Edit Arrows to add manually."
             }
         } catch (e: Exception) {
             Log.e(TAG, "Image processing failed", e)
-            // Create fallback target for manual scoring
             val defaultTarget = TargetDetection(
                 center = PointF(imageWidth / 2f, imageHeight / 2f),
                 radius = minOf(imageWidth, imageHeight) / 2.5f,
                 confidence = 0f
             )
             targetDetection = defaultTarget
-            errorMessage = "Auto-detection failed. Tap to add arrows manually."
+            errorMessage = "Auto-detection failed. Use Edit Arrows to add manually."
         } finally {
             isProcessing = false
         }
     }
 
-    // Calculate scores
     val scores = remember(arrowDetections.toList(), targetDetection) {
         targetDetection?.let { target ->
             scoreCalculator.calculate(arrowDetections.toList(), target)
@@ -157,158 +148,157 @@ fun ReviewScreen(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp)
-        ) {
-            // Image with overlay
+        if (isProcessing) {
             Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator()
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("Analyzing image...")
+                }
+            }
+        } else {
+            Column(
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .onSizeChanged { size ->
-                        displayWidth = size.width.toFloat()
-                        displayHeight = size.height.toFloat()
-                    }
+                    .fillMaxSize()
+                    .padding(12.dp)
             ) {
-                Image(
-                    bitmap = capturedImage.asImageBitmap(),
-                    contentDescription = "Captured target",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Fit
-                )
-
-                if (isProcessing) {
-                    Column(
-                        modifier = Modifier.align(Alignment.Center),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        CircularProgressIndicator()
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("Analyzing image...")
-                    }
-                } else {
-                    // Detection overlay with manual adjustment
-                    DetectionOverlay(
-                        target = targetDetection,
-                        arrows = arrowDetections.toList(),
-                        scores = scores,
-                        selectedIndex = selectedArrowIndex,
-                        imageWidth = imageWidth,
-                        imageHeight = imageHeight,
-                        displayWidth = displayWidth,
-                        displayHeight = displayHeight,
-                        onArrowSelected = { index -> selectedArrowIndex = index },
-                        onArrowMoved = { index, newPos ->
-                            if (index in arrowDetections.indices) {
-                                arrowDetections[index] = arrowDetections[index].copy(position = newPos)
-                            }
-                        },
-                        onArrowAdded = { pos ->
-                            arrowDetections.add(ArrowDetection(position = pos, confidence = 1.0f))
-                        },
-                        onArrowDeleted = { index ->
-                            if (index in arrowDetections.indices) {
-                                arrowDetections.removeAt(index)
-                                selectedArrowIndex = -1
-                            }
-                        }
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Error message if any
-            errorMessage?.let { msg ->
-                Text(
-                    text = msg,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-            }
-
-            // Score summary
-            Card(
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp)
+                // Side-by-side views
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                    // Left: Original image with overlays
+                    Card(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxSize()
                     ) {
-                        Text(
-                            text = "Total Score",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        Text(
-                            text = "$totalScore",
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
+                        ImageWithOverlay(
+                            bitmap = capturedImage,
+                            target = targetDetection,
+                            arrows = arrowDetections.toList(),
+                            scores = scores,
+                            modifier = Modifier.fillMaxSize()
                         )
                     }
-                    if (xCount > 0) {
-                        Text(
-                            text = "${xCount}X",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.secondary
+
+                    // Right: Synthetic target
+                    Card(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxSize()
+                    ) {
+                        SyntheticTargetPreview(
+                            target = targetDetection,
+                            arrows = arrowDetections.toList(),
+                            scores = scores,
+                            modifier = Modifier.fillMaxSize()
                         )
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Error message
+                errorMessage?.let { msg ->
                     Text(
-                        text = "Arrows: ${arrowDetections.size}" + if (scores.isNotEmpty()) " | Scores: ${scores.map { it.score }.joinToString(", ")}" else "",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Tap to add arrow, drag to move, long-press to delete",
+                        text = msg,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(bottom = 8.dp)
                     )
                 }
-            }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Action buttons
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                OutlinedButton(
-                    onClick = onRetake,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Retake")
+                // Score summary
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "Total Score",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = "Arrows: ${arrowDetections.size}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "$totalScore",
+                                style = MaterialTheme.typography.headlineLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            if (xCount > 0) {
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "${xCount}X",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.secondary
+                                )
+                            }
+                        }
+                    }
                 }
 
-                Spacer(modifier = Modifier.width(16.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                Button(
-                    onClick = {
-                        targetDetection?.let { target ->
-                            val result = ScoringResult(
-                                originalImage = capturedImage,
-                                processedImage = capturedImage,
-                                target = target,
-                                arrows = arrowDetections.toList(),
-                                scores = scores,
-                                totalScore = totalScore,
-                                xCount = xCount
-                            )
-                            onConfirm(result)
-                        }
-                    },
-                    modifier = Modifier.weight(1f),
-                    enabled = targetDetection != null
+                // Action buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("Confirm")
+                    OutlinedButton(
+                        onClick = onRetake,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Retake")
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            targetDetection?.let { target ->
+                                onEditArrows(target, arrowDetections.toList())
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        enabled = targetDetection != null
+                    ) {
+                        Text("Edit Arrows")
+                    }
+
+                    Button(
+                        onClick = {
+                            targetDetection?.let { target ->
+                                val result = ScoringResult(
+                                    originalImage = capturedImage,
+                                    processedImage = capturedImage,
+                                    target = target,
+                                    arrows = arrowDetections.toList(),
+                                    scores = scores,
+                                    totalScore = totalScore,
+                                    xCount = xCount
+                                )
+                                onConfirm(result)
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        enabled = targetDetection != null
+                    ) {
+                        Text("Confirm")
+                    }
                 }
             }
         }
@@ -316,180 +306,189 @@ fun ReviewScreen(
 }
 
 @Composable
-private fun DetectionOverlay(
+private fun ImageWithOverlay(
+    bitmap: Bitmap,
     target: TargetDetection?,
     arrows: List<ArrowDetection>,
     scores: List<ArrowScore>,
-    selectedIndex: Int,
-    imageWidth: Float,
-    imageHeight: Float,
-    displayWidth: Float,
-    displayHeight: Float,
-    onArrowSelected: (Int) -> Unit,
-    onArrowMoved: (Int, PointF) -> Unit,
-    onArrowAdded: (PointF) -> Unit,
-    onArrowDeleted: (Int) -> Unit
+    modifier: Modifier = Modifier
+) {
+    val textMeasurer = rememberTextMeasurer()
+    var displayWidth by remember { mutableFloatStateOf(0f) }
+    var displayHeight by remember { mutableFloatStateOf(0f) }
+
+    val imageWidth = bitmap.width.toFloat()
+    val imageHeight = bitmap.height.toFloat()
+
+    Box(
+        modifier = modifier.onSizeChanged { size ->
+            displayWidth = size.width.toFloat()
+            displayHeight = size.height.toFloat()
+        }
+    ) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = "Captured target",
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Fit
+        )
+
+        if (displayWidth > 0 && displayHeight > 0) {
+            val imageAspect = imageWidth / imageHeight
+            val displayAspect = displayWidth / displayHeight
+
+            val scale: Float
+            val offsetX: Float
+            val offsetY: Float
+
+            if (imageAspect > displayAspect) {
+                scale = displayWidth / imageWidth
+                offsetX = 0f
+                offsetY = (displayHeight - imageHeight * scale) / 2f
+            } else {
+                scale = displayHeight / imageHeight
+                offsetX = (displayWidth - imageWidth * scale) / 2f
+                offsetY = 0f
+            }
+
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                // Draw target outline
+                target?.let { t ->
+                    val centerX = t.center.x * scale + offsetX
+                    val centerY = t.center.y * scale + offsetY
+                    val centerDisplay = Offset(centerX, centerY)
+
+                    drawCircle(
+                        color = Color.Green.copy(alpha = 0.7f),
+                        radius = t.radius * scale,
+                        center = centerDisplay,
+                        style = Stroke(width = 2f)
+                    )
+
+                    drawCircle(
+                        color = Color.Green,
+                        radius = 6f,
+                        center = centerDisplay,
+                        style = Stroke(width = 2f)
+                    )
+                }
+
+                // Draw arrows
+                arrows.forEachIndexed { index, arrow ->
+                    val posX = arrow.position.x * scale + offsetX
+                    val posY = arrow.position.y * scale + offsetY
+                    val pos = Offset(posX, posY)
+                    val score = scores.getOrNull(index)
+
+                    drawCircle(
+                        color = if (score?.isX == true) Color(0xFFFFD700) else Color.Red,
+                        radius = 16f,
+                        center = pos
+                    )
+                    drawCircle(
+                        color = Color.White,
+                        radius = 16f,
+                        center = pos,
+                        style = Stroke(width = 2f)
+                    )
+
+                    score?.let { s ->
+                        val label = if (s.isX) "X" else s.score.toString()
+                        val textLayoutResult = textMeasurer.measure(
+                            text = label,
+                            style = TextStyle(
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        )
+                        drawText(
+                            textLayoutResult = textLayoutResult,
+                            topLeft = Offset(
+                                pos.x - textLayoutResult.size.width / 2,
+                                pos.y - textLayoutResult.size.height / 2
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SyntheticTargetPreview(
+    target: TargetDetection?,
+    arrows: List<ArrowDetection>,
+    scores: List<ArrowScore>,
+    modifier: Modifier = Modifier
 ) {
     val textMeasurer = rememberTextMeasurer()
 
-    // Calculate scale and offset for proper coordinate mapping
-    val imageAspect = if (imageHeight > 0) imageWidth / imageHeight else 1f
-    val displayAspect = if (displayHeight > 0) displayWidth / displayHeight else 1f
+    val goldColor = Color(0xFFFFD700)
+    val redColor = Color(0xFFE31837)
+    val blueColor = Color(0xFF00A2E8)
+    val blackColor = Color(0xFF000000)
+    val whiteColor = Color(0xFFFFFFFF)
 
-    val scale: Float
-    val offsetX: Float
-    val offsetY: Float
-
-    if (imageWidth > 0 && imageHeight > 0 && displayWidth > 0 && displayHeight > 0) {
-        if (imageAspect > displayAspect) {
-            scale = displayWidth / imageWidth
-            offsetX = 0f
-            offsetY = (displayHeight - imageHeight * scale) / 2f
-        } else {
-            scale = displayHeight / imageHeight
-            offsetX = (displayWidth - imageWidth * scale) / 2f
-            offsetY = 0f
-        }
-    } else {
-        scale = 1f
-        offsetX = 0f
-        offsetY = 0f
-    }
-
-    fun imageToDisplay(point: PointF): Offset {
-        return Offset(point.x * scale + offsetX, point.y * scale + offsetY)
-    }
-
-    fun displayToImage(offset: Offset): PointF {
-        return PointF(
-            ((offset.x - offsetX) / scale).coerceIn(0f, imageWidth),
-            ((offset.y - offsetY) / scale).coerceIn(0f, imageHeight)
-        )
-    }
-
-    var draggedIndex by remember { mutableIntStateOf(-1) }
-
-    Canvas(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(arrows.size) {
-                detectTapGestures(
-                    onTap = { offset ->
-                        val imagePos = displayToImage(offset)
-                        // Check if tapped on an arrow
-                        val tappedIndex = arrows.indexOfFirst { arrow ->
-                            val displayPos = imageToDisplay(arrow.position)
-                            (offset - displayPos).getDistance() < 40f
-                        }
-                        if (tappedIndex >= 0) {
-                            onArrowSelected(tappedIndex)
-                        } else {
-                            // Add new arrow at tap location
-                            onArrowAdded(imagePos)
-                        }
-                    },
-                    onLongPress = { offset ->
-                        val tappedIndex = arrows.indexOfFirst { arrow ->
-                            val displayPos = imageToDisplay(arrow.position)
-                            (offset - displayPos).getDistance() < 40f
-                        }
-                        if (tappedIndex >= 0) {
-                            onArrowDeleted(tappedIndex)
-                        }
-                    }
-                )
-            }
-            .pointerInput(selectedIndex, arrows.size) {
-                detectDragGestures(
-                    onDragStart = { offset ->
-                        val tappedIndex = arrows.indexOfFirst { arrow ->
-                            val displayPos = imageToDisplay(arrow.position)
-                            (offset - displayPos).getDistance() < 40f
-                        }
-                        draggedIndex = tappedIndex
-                    },
-                    onDrag = { change, _ ->
-                        if (draggedIndex >= 0) {
-                            val newImagePos = displayToImage(change.position)
-                            onArrowMoved(draggedIndex, newImagePos)
-                        }
-                    },
-                    onDragEnd = {
-                        draggedIndex = -1
-                    }
-                )
-            }
+    Box(
+        modifier = modifier,
+        contentAlignment = Alignment.Center
     ) {
-        // Draw target center if detected
-        target?.let { t ->
-            val centerDisplay = imageToDisplay(t.center)
+        Canvas(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+            val center = Offset(size.width / 2f, size.height / 2f)
+            val maxRadius = min(size.width, size.height) / 2f * 0.95f
+            val ringWidth = maxRadius / 10f
 
-            // Draw target outline
-            drawCircle(
-                color = Color.Green.copy(alpha = 0.7f),
-                radius = t.radius * scale,
-                center = centerDisplay,
-                style = Stroke(width = 2f)
-            )
+            // Draw rings
+            drawCircle(color = whiteColor, radius = maxRadius, center = center)
+            drawCircle(color = blackColor, radius = maxRadius, center = center, style = Stroke(width = 2f))
+            drawCircle(color = blackColor, radius = maxRadius - ringWidth * 2, center = center)
+            drawCircle(color = blueColor, radius = maxRadius - ringWidth * 4, center = center)
+            drawCircle(color = redColor, radius = maxRadius - ringWidth * 6, center = center)
+            drawCircle(color = goldColor, radius = maxRadius - ringWidth * 8, center = center)
 
-            // Draw center crosshair
-            drawCircle(
-                color = Color.Green,
-                radius = 8f,
-                center = centerDisplay,
-                style = Stroke(width = 2f)
-            )
-            drawLine(
-                color = Color.Green,
-                start = Offset(centerDisplay.x - 15f, centerDisplay.y),
-                end = Offset(centerDisplay.x + 15f, centerDisplay.y),
-                strokeWidth = 2f
-            )
-            drawLine(
-                color = Color.Green,
-                start = Offset(centerDisplay.x, centerDisplay.y - 15f),
-                end = Offset(centerDisplay.x, centerDisplay.y + 15f),
-                strokeWidth = 2f
-            )
-        }
+            // Ring separators
+            for (i in 1..10) {
+                val ringRadius = maxRadius - ringWidth * (i - 1)
+                val strokeColor = when {
+                    i <= 2 -> blackColor
+                    i <= 4 -> Color.White
+                    else -> blackColor
+                }
+                drawCircle(color = strokeColor, radius = ringRadius, center = center, style = Stroke(width = 1f))
+            }
 
-        // Draw arrows
-        arrows.forEachIndexed { index, arrow ->
-            val pos = imageToDisplay(arrow.position)
-            val isSelected = index == selectedIndex
-            val score = scores.getOrNull(index)
+            drawCircle(color = blackColor, radius = ringWidth * 0.5f, center = center, style = Stroke(width = 1f))
 
-            // Arrow marker circle
-            drawCircle(
-                color = if (isSelected) Color.Yellow else if (score?.isX == true) Color(0xFFFFD700) else Color.Red,
-                radius = if (isSelected) 25f else 20f,
-                center = pos
-            )
-            drawCircle(
-                color = Color.White,
-                radius = if (isSelected) 25f else 20f,
-                center = pos,
-                style = Stroke(width = 3f)
-            )
+            // Draw arrows
+            target?.let { t ->
+                arrows.forEachIndexed { index, arrow ->
+                    val relX = (arrow.position.x - t.center.x) / t.radius
+                    val relY = (arrow.position.y - t.center.y) / t.radius
+                    val arrowX = center.x + relX * maxRadius
+                    val arrowY = center.y + relY * maxRadius
+                    val arrowPos = Offset(arrowX, arrowY)
+                    val score = scores.getOrNull(index)
 
-            // Score label
-            score?.let { s ->
-                val label = if (s.isX) "X" else s.score.toString()
-                val textLayoutResult = textMeasurer.measure(
-                    text = label,
-                    style = TextStyle(
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                )
-                drawText(
-                    textLayoutResult = textLayoutResult,
-                    topLeft = Offset(
-                        pos.x - textLayoutResult.size.width / 2,
-                        pos.y - textLayoutResult.size.height / 2
-                    )
-                )
+                    drawCircle(color = Color.Red, radius = 14f, center = arrowPos)
+                    drawCircle(color = Color.White, radius = 14f, center = arrowPos, style = Stroke(width = 2f))
+
+                    score?.let { s ->
+                        val label = if (s.isX) "X" else s.score.toString()
+                        val textLayoutResult = textMeasurer.measure(
+                            text = label,
+                            style = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        )
+                        drawText(
+                            textLayoutResult = textLayoutResult,
+                            topLeft = Offset(
+                                arrowPos.x - textLayoutResult.size.width / 2,
+                                arrowPos.y - textLayoutResult.size.height / 2
+                            )
+                        )
+                    }
+                }
             }
         }
     }

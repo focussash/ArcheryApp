@@ -4,14 +4,17 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -22,7 +25,8 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun HomeScreen(
-    onScanTarget: () -> Unit
+    onScanTarget: () -> Unit,
+    onUploadImage: () -> Unit
 ) {
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -54,7 +58,9 @@ fun HomeScreen(
 
             Button(
                 onClick = onScanTarget,
-                modifier = Modifier.height(56.dp)
+                modifier = Modifier
+                    .fillMaxWidth(0.7f)
+                    .height(56.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.CameraAlt,
@@ -64,6 +70,26 @@ fun HomeScreen(
                 Spacer(modifier = Modifier.size(8.dp))
                 Text(
                     text = "Scan Target",
+                    style = MaterialTheme.typography.titleMedium
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            OutlinedButton(
+                onClick = onUploadImage,
+                modifier = Modifier
+                    .fillMaxWidth(0.7f)
+                    .height(56.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PhotoLibrary,
+                    contentDescription = null,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.size(8.dp))
+                Text(
+                    text = "Upload Image",
                     style = MaterialTheme.typography.titleMedium
                 )
             }

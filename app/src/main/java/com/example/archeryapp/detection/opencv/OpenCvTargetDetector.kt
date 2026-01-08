@@ -104,10 +104,14 @@ class OpenCvTargetDetector : TargetDetector {
             // Validate circle by checking for target colors
             val colorScore = validateTargetColors(mat, center, radius)
 
-            Log.d(TAG, "Circle $i: center=(${center.x}, ${center.y}), radius=$radius, colorScore=$colorScore")
+            // Prefer larger circles - add bonus for size (normalized to image size)
+            val sizeBonus = (radius / gray.rows()) * 2.0
+            val totalScore = colorScore + sizeBonus
 
-            if (colorScore > bestScore) {
-                bestScore = colorScore
+            Log.d(TAG, "Circle $i: center=(${center.x}, ${center.y}), radius=$radius, colorScore=$colorScore, sizeBonus=$sizeBonus, total=$totalScore")
+
+            if (totalScore > bestScore) {
+                bestScore = totalScore
                 bestCircle = Triple(center, radius, colorScore)
             }
         }
@@ -122,7 +126,7 @@ class OpenCvTargetDetector : TargetDetector {
             TargetDetection(
                 center = PointF(center.x.toFloat(), center.y.toFloat()),
                 radius = radius.toFloat(),
-                confidence = (confidence / 3.0).toFloat().coerceIn(0f, 1f)
+                confidence = (confidence / 4.0).toFloat().coerceIn(0f, 1f)  // 4 color checks now
             )
         }
     }
@@ -151,11 +155,17 @@ class OpenCvTargetDetector : TargetDetector {
             val redRatio = countPixelsInRing(redMask, center, radius * 0.2, radius * 0.4)
             if (redRatio > 0.2) score += 1.0
 
-            // Check for blue in outer rings
+            // Check for blue in middle-outer rings
             val blueMask = Mat()
             Core.inRange(hsv, BLUE_LOW, BLUE_HIGH, blueMask)
             val blueRatio = countPixelsInRing(blueMask, center, radius * 0.4, radius * 0.6)
             if (blueRatio > 0.2) score += 1.0
+
+            // Check for white in outermost rings (high value, low saturation)
+            val whiteMask = Mat()
+            Core.inRange(hsv, Scalar(0.0, 0.0, 180.0), Scalar(180.0, 50.0, 255.0), whiteMask)
+            val whiteRatio = countPixelsInRing(whiteMask, center, radius * 0.8, radius * 1.0)
+            if (whiteRatio > 0.15) score += 1.0
 
             // Cleanup
             hsv.release()
@@ -164,6 +174,7 @@ class OpenCvTargetDetector : TargetDetector {
             redMask2.release()
             redMask.release()
             blueMask.release()
+            whiteMask.release()
 
             score
         } catch (e: Exception) {

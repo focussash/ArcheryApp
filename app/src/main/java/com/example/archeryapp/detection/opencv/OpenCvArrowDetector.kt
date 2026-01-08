@@ -20,9 +20,11 @@ class OpenCvArrowDetector : ArrowDetector {
 
     companion object {
         private const val TAG = "OpenCvArrowDetector"
-        private const val MIN_LINE_LENGTH = 30.0
-        private const val MAX_LINE_GAP = 10.0
-        private const val ARROW_GROUP_DISTANCE = 50.0
+        private const val MIN_LINE_LENGTH = 50.0  // Relaxed from 80
+        private const val MAX_LINE_GAP = 15.0
+        private const val ARROW_GROUP_DISTANCE = 60.0  // Grouping radius
+        private const val MAX_ARROWS = 12  // Realistic max arrows on a target
+        private const val MIN_GROUP_SIZE = 1  // Allow single line segments
         private var isOpenCvInitialized = false
 
         init {
@@ -60,12 +62,12 @@ class OpenCvArrowDetector : ArrowDetector {
         val gray = Mat()
         Imgproc.cvtColor(mat, gray, Imgproc.COLOR_RGBA2GRAY)
 
-        // Apply Gaussian blur
-        Imgproc.GaussianBlur(gray, gray, Size(5.0, 5.0), 1.5)
+        // Apply Gaussian blur to reduce noise
+        Imgproc.GaussianBlur(gray, gray, Size(7.0, 7.0), 2.0)
 
-        // Edge detection
+        // Edge detection with higher thresholds to reduce noise
         val edges = Mat()
-        Imgproc.Canny(gray, edges, 50.0, 150.0)
+        Imgproc.Canny(gray, edges, 80.0, 200.0)
 
         // Detect lines using Hough Transform
         val lines = Mat()
@@ -74,7 +76,7 @@ class OpenCvArrowDetector : ArrowDetector {
             lines,
             1.0,                    // rho - distance resolution
             Math.PI / 180,          // theta - angle resolution
-            50,                     // threshold
+            70,                     // threshold - balanced
             MIN_LINE_LENGTH,        // minLineLength
             MAX_LINE_GAP            // maxLineGap
         )
@@ -84,7 +86,7 @@ class OpenCvArrowDetector : ArrowDetector {
         val targetCenter = Point(target.center.x.toDouble(), target.center.y.toDouble())
         val targetRadius = target.radius.toDouble()
 
-        // Filter and process lines
+        // Filter and process lines with strict criteria
         val arrowCandidates = mutableListOf<ArrowCandidate>()
 
         for (i in 0 until lines.rows()) {
@@ -99,29 +101,43 @@ class OpenCvArrowDetector : ArrowDetector {
             val p1 = Point(x1, y1)
             val p2 = Point(x2, y2)
 
-            // Check if line is within or near target
+            val lineLength = distance(p1, p2)
+
+            // Skip short lines
+            if (lineLength < MIN_LINE_LENGTH) continue
+
+            // Check distances from center
             val dist1 = distance(p1, targetCenter)
             val dist2 = distance(p2, targetCenter)
 
-            if (dist1 <= targetRadius * 1.5 || dist2 <= targetRadius * 1.5) {
-                // Find the end closest to center (arrow tip)
-                val tip = if (dist1 < dist2) p1 else p2
-                val tail = if (dist1 < dist2) p2 else p1
+            // Line should have one end inside/near target
+            val minDist = minOf(dist1, dist2)
+            val maxDist = maxOf(dist1, dist2)
 
-                // Check if line points roughly toward center (radial orientation)
-                val lineAngle = atan2(tip.y - tail.y, tip.x - tail.x)
-                val centerAngle = atan2(targetCenter.y - tail.y, targetCenter.x - tail.x)
-                val angleDiff = abs(normalizeAngle(lineAngle - centerAngle))
+            if (minDist > targetRadius * 1.2) continue  // Both ends too far from center
 
-                // Allow lines that are roughly radial (within 60 degrees)
-                if (angleDiff < Math.PI / 3) {
-                    val lineLength = distance(p1, p2)
-                    arrowCandidates.add(ArrowCandidate(tip, lineLength, angleDiff))
-                }
+            // Find the end closest to center (arrow tip)
+            val tip = if (dist1 < dist2) p1 else p2
+            val tail = if (dist1 < dist2) p2 else p1
+            val tipDist = minOf(dist1, dist2)
+            val tailDist = maxOf(dist1, dist2)
+
+            // Arrow should span some distance (not just on edge of target)
+            val radialSpan = tailDist - tipDist
+            if (radialSpan < lineLength * 0.3) continue  // Line is more tangent than radial
+
+            // Check if line points toward center (radial orientation)
+            val lineAngle = atan2(tip.y - tail.y, tip.x - tail.x)
+            val centerAngle = atan2(targetCenter.y - tail.y, targetCenter.x - tail.x)
+            val angleDiff = abs(normalizeAngle(lineAngle - centerAngle))
+
+            // Angle check - within 45 degrees of radial
+            if (angleDiff < Math.PI / 4) {
+                arrowCandidates.add(ArrowCandidate(tip, lineLength, angleDiff))
             }
         }
 
-        Log.d(TAG, "Found ${arrowCandidates.size} arrow candidates")
+        Log.d(TAG, "Found ${arrowCandidates.size} arrow candidates after filtering")
 
         // Group nearby arrow candidates
         val groupedArrows = groupArrowCandidates(arrowCandidates, targetCenter, targetRadius)
@@ -134,12 +150,14 @@ class OpenCvArrowDetector : ArrowDetector {
         edges.release()
         lines.release()
 
-        return groupedArrows.map { candidate ->
-            ArrowDetection(
-                position = PointF(candidate.tip.x.toFloat(), candidate.tip.y.toFloat()),
-                confidence = calculateConfidence(candidate)
-            )
-        }
+        return groupedArrows
+            .take(MAX_ARROWS)  // Limit to realistic number
+            .map { candidate ->
+                ArrowDetection(
+                    position = PointF(candidate.tip.x.toFloat(), candidate.tip.y.toFloat()),
+                    confidence = calculateConfidence(candidate)
+                )
+            }
     }
 
     private fun groupArrowCandidates(
@@ -151,7 +169,10 @@ class OpenCvArrowDetector : ArrowDetector {
 
         val grouped = mutableListOf<MutableList<ArrowCandidate>>()
 
-        for (candidate in candidates) {
+        // Sort by line length (longer lines are more likely to be arrows)
+        val sortedCandidates = candidates.sortedByDescending { it.length }
+
+        for (candidate in sortedCandidates) {
             var addedToGroup = false
 
             for (group in grouped) {
@@ -171,13 +192,18 @@ class OpenCvArrowDetector : ArrowDetector {
             }
         }
 
-        // Take the best candidate from each group (longest line, best angle)
-        return grouped.mapNotNull { group ->
-            group.maxByOrNull { it.length / (it.angleDiff + 0.1) }
-        }.filter { candidate ->
-            // Only keep arrows within the target
-            distance(candidate.tip, targetCenter) <= targetRadius
-        }
+        // Only keep groups with enough supporting line segments
+        // Take the best candidate from each qualifying group
+        return grouped
+            .filter { group -> group.size >= MIN_GROUP_SIZE }
+            .mapNotNull { group ->
+                group.maxByOrNull { it.length / (it.angleDiff + 0.1) }
+            }
+            .filter { candidate ->
+                // Only keep arrows within the target
+                distance(candidate.tip, targetCenter) <= targetRadius
+            }
+            .sortedByDescending { it.length }  // Return longest/best arrows first
     }
 
     private fun calculateConfidence(candidate: ArrowCandidate): Float {

@@ -1,6 +1,7 @@
 package com.example.archeryapp.ui.screens.camera
 
 import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.util.Log
 import androidx.camera.core.AspectRatio
 import androidx.camera.core.CameraSelector
@@ -159,11 +160,30 @@ private fun CameraContent(
                     cameraExecutor,
                     object : ImageCapture.OnImageCapturedCallback() {
                         override fun onCaptureSuccess(image: ImageProxy) {
-                            val bitmap = image.toBitmap()
+                            val originalBitmap = image.toBitmap()
+                            val rotationDegrees = image.imageInfo.rotationDegrees
                             image.close()
+
+                            // Rotate bitmap to correct orientation
+                            val rotatedBitmap = if (rotationDegrees != 0) {
+                                val matrix = Matrix().apply {
+                                    postRotate(rotationDegrees.toFloat())
+                                }
+                                Bitmap.createBitmap(
+                                    originalBitmap,
+                                    0, 0,
+                                    originalBitmap.width,
+                                    originalBitmap.height,
+                                    matrix,
+                                    true
+                                )
+                            } else {
+                                originalBitmap
+                            }
+
                             // Navigate on main thread to avoid IllegalStateException
                             mainExecutor.execute {
-                                onImageCaptured(bitmap)
+                                onImageCaptured(rotatedBitmap)
                             }
                         }
 
