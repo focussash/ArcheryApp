@@ -20,11 +20,12 @@ class OpenCvArrowDetector : ArrowDetector {
 
     companion object {
         private const val TAG = "OpenCvArrowDetector"
-        private const val MIN_LINE_LENGTH = 50.0  // Relaxed from 80
-        private const val MAX_LINE_GAP = 15.0
-        private const val ARROW_GROUP_DISTANCE = 60.0  // Grouping radius
+        // Line length now calculated as fraction of target radius
+        private const val MIN_LINE_LENGTH_FACTOR = 0.15  // Minimum line = 15% of target radius
+        private const val MAX_LINE_GAP = 20.0
+        private const val ARROW_GROUP_DISTANCE_FACTOR = 0.12  // Grouping = 12% of target radius
         private const val MAX_ARROWS = 12  // Realistic max arrows on a target
-        private const val MIN_GROUP_SIZE = 1  // Allow single line segments
+        private const val MIN_GROUP_SIZE = 2  // Require at least 2 line segments to reduce false positives
         private var isOpenCvInitialized = false
 
         init {
@@ -62,37 +63,62 @@ class OpenCvArrowDetector : ArrowDetector {
         val gray = Mat()
         Imgproc.cvtColor(mat, gray, Imgproc.COLOR_RGBA2GRAY)
 
+        // Apply CLAHE for better contrast (matches target detector)
+        val clahe = Imgproc.createCLAHE(2.0, Size(8.0, 8.0))
+        clahe.apply(gray, gray)
+
         // Apply Gaussian blur to reduce noise
-        Imgproc.GaussianBlur(gray, gray, Size(7.0, 7.0), 2.0)
+        Imgproc.GaussianBlur(gray, gray, Size(5.0, 5.0), 1.5)
 
-        // Edge detection with higher thresholds to reduce noise
-        val edges = Mat()
-        Imgproc.Canny(gray, edges, 80.0, 200.0)
+        // Calculate dynamic parameters based on target size
+        val targetRadius = target.radius.toDouble()
+        val minLineLength = (targetRadius * MIN_LINE_LENGTH_FACTOR).coerceAtLeast(30.0)
+        val groupDistance = (targetRadius * ARROW_GROUP_DISTANCE_FACTOR).coerceAtLeast(25.0)
 
-        // Detect lines using Hough Transform
-        val lines = Mat()
-        Imgproc.HoughLinesP(
-            edges,
-            lines,
-            1.0,                    // rho - distance resolution
-            Math.PI / 180,          // theta - angle resolution
-            70,                     // threshold - balanced
-            MIN_LINE_LENGTH,        // minLineLength
-            MAX_LINE_GAP            // maxLineGap
+        Log.d(TAG, "Target radius: $targetRadius, minLineLength: $minLineLength, groupDistance: $groupDistance")
+
+        // Try multiple Canny threshold combinations to catch arrows in different lighting
+        val allLines = mutableListOf<DoubleArray>()
+        val cannyParams = listOf(
+            Pair(50.0, 150.0),   // Lower thresholds for faint arrows
+            Pair(80.0, 200.0),   // Original/balanced
+            Pair(30.0, 100.0)    // Very low for dark arrows on dark backgrounds
         )
 
-        Log.d(TAG, "Found ${lines.rows()} lines")
+        for ((low, high) in cannyParams) {
+            val edges = Mat()
+            Imgproc.Canny(gray, edges, low, high)
+
+            val lines = Mat()
+            Imgproc.HoughLinesP(
+                edges,
+                lines,
+                1.0,                    // rho - distance resolution
+                Math.PI / 180,          // theta - angle resolution
+                50,                     // threshold - lowered for more sensitivity
+                minLineLength,          // minLineLength - now dynamic
+                MAX_LINE_GAP            // maxLineGap
+            )
+
+            for (i in 0 until lines.rows()) {
+                val line = lines.get(i, 0)
+                if (line != null && line.size >= 4) {
+                    allLines.add(line)
+                }
+            }
+
+            edges.release()
+            lines.release()
+        }
+
+        Log.d(TAG, "Found ${allLines.size} lines across all Canny thresholds")
 
         val targetCenter = Point(target.center.x.toDouble(), target.center.y.toDouble())
-        val targetRadius = target.radius.toDouble()
 
         // Filter and process lines with strict criteria
         val arrowCandidates = mutableListOf<ArrowCandidate>()
 
-        for (i in 0 until lines.rows()) {
-            val line = lines.get(i, 0) ?: continue
-            if (line.size < 4) continue
-
+        for (line in allLines) {
             val x1 = line[0]
             val y1 = line[1]
             val x2 = line[2]
@@ -103,8 +129,8 @@ class OpenCvArrowDetector : ArrowDetector {
 
             val lineLength = distance(p1, p2)
 
-            // Skip short lines
-            if (lineLength < MIN_LINE_LENGTH) continue
+            // Skip short lines (already filtered by HoughLinesP, but double-check)
+            if (lineLength < minLineLength) continue
 
             // Check distances from center
             val dist1 = distance(p1, targetCenter)
@@ -140,15 +166,13 @@ class OpenCvArrowDetector : ArrowDetector {
         Log.d(TAG, "Found ${arrowCandidates.size} arrow candidates after filtering")
 
         // Group nearby arrow candidates
-        val groupedArrows = groupArrowCandidates(arrowCandidates, targetCenter, targetRadius)
+        val groupedArrows = groupArrowCandidates(arrowCandidates, targetCenter, targetRadius, groupDistance)
 
         Log.d(TAG, "Grouped into ${groupedArrows.size} arrows")
 
         // Cleanup
         mat.release()
         gray.release()
-        edges.release()
-        lines.release()
 
         return groupedArrows
             .take(MAX_ARROWS)  // Limit to realistic number
@@ -163,7 +187,8 @@ class OpenCvArrowDetector : ArrowDetector {
     private fun groupArrowCandidates(
         candidates: List<ArrowCandidate>,
         targetCenter: Point,
-        targetRadius: Double
+        targetRadius: Double,
+        groupDistance: Double
     ): List<ArrowCandidate> {
         if (candidates.isEmpty()) return emptyList()
 
@@ -180,7 +205,7 @@ class OpenCvArrowDetector : ArrowDetector {
                     group.map { it.tip.x }.average(),
                     group.map { it.tip.y }.average()
                 )
-                if (distance(candidate.tip, avgTip) < ARROW_GROUP_DISTANCE) {
+                if (distance(candidate.tip, avgTip) < groupDistance) {
                     group.add(candidate)
                     addedToGroup = true
                     break
@@ -192,6 +217,8 @@ class OpenCvArrowDetector : ArrowDetector {
             }
         }
 
+        Log.d(TAG, "Groups before filtering: ${grouped.size}, sizes: ${grouped.map { it.size }}")
+
         // Only keep groups with enough supporting line segments
         // Take the best candidate from each qualifying group
         return grouped
@@ -200,8 +227,8 @@ class OpenCvArrowDetector : ArrowDetector {
                 group.maxByOrNull { it.length / (it.angleDiff + 0.1) }
             }
             .filter { candidate ->
-                // Only keep arrows within the target
-                distance(candidate.tip, targetCenter) <= targetRadius
+                // Only keep arrows within the target (with small margin)
+                distance(candidate.tip, targetCenter) <= targetRadius * 1.05
             }
             .sortedByDescending { it.length }  // Return longest/best arrows first
     }

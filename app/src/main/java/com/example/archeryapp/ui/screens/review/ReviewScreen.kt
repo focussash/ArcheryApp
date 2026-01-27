@@ -53,10 +53,23 @@ import com.example.archeryapp.detection.opencv.OpenCvArrowDetector
 import com.example.archeryapp.detection.opencv.OpenCvTargetDetector
 import com.example.archeryapp.domain.scoring.ScoreCalculator
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlin.math.min
 
 private const val TAG = "ReviewScreen"
+private const val ANALYSIS_TIMEOUT_MS = 15_000L  // 15 second timeout
+
+private enum class AnalysisStep {
+    PREPARING,
+    DETECTING_TARGET,
+    DETECTING_ARROWS,
+    CALCULATING_SCORES,
+    COMPLETE,
+    TIMEOUT,
+    FAILED
+}
 
 @Composable
 fun ReviewScreen(

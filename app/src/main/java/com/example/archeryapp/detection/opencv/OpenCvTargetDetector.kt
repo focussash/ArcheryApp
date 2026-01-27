@@ -21,19 +21,21 @@ class OpenCvTargetDetector : TargetDetector {
         private var isOpenCvInitialized = false
 
         // HSV ranges for target colors (USA archery target)
-        // Gold/Yellow (10, 9 rings)
-        private val GOLD_LOW = Scalar(15.0, 100.0, 100.0)
-        private val GOLD_HIGH = Scalar(35.0, 255.0, 255.0)
+        // Expanded ranges and lowered saturation minimums for lighting tolerance
 
-        // Red (8, 7 rings)
-        private val RED_LOW_1 = Scalar(0.0, 100.0, 100.0)
-        private val RED_HIGH_1 = Scalar(10.0, 255.0, 255.0)
-        private val RED_LOW_2 = Scalar(160.0, 100.0, 100.0)
+        // Gold/Yellow (10, 9 rings) - expanded hue range, lower saturation minimum
+        private val GOLD_LOW = Scalar(12.0, 60.0, 80.0)
+        private val GOLD_HIGH = Scalar(40.0, 255.0, 255.0)
+
+        // Red (8, 7 rings) - lower saturation for washed-out reds
+        private val RED_LOW_1 = Scalar(0.0, 50.0, 60.0)
+        private val RED_HIGH_1 = Scalar(12.0, 255.0, 255.0)
+        private val RED_LOW_2 = Scalar(155.0, 50.0, 60.0)
         private val RED_HIGH_2 = Scalar(180.0, 255.0, 255.0)
 
-        // Blue (6, 5 rings)
-        private val BLUE_LOW = Scalar(100.0, 100.0, 50.0)
-        private val BLUE_HIGH = Scalar(130.0, 255.0, 255.0)
+        // Blue (6, 5 rings) - expanded range for cyan-ish blues
+        private val BLUE_LOW = Scalar(90.0, 50.0, 40.0)
+        private val BLUE_HIGH = Scalar(135.0, 255.0, 255.0)
 
         init {
             try {
@@ -71,35 +73,73 @@ class OpenCvTargetDetector : TargetDetector {
         val gray = Mat()
         Imgproc.cvtColor(mat, gray, Imgproc.COLOR_RGBA2GRAY)
 
+        // Normalize brightness/contrast using CLAHE (Contrast Limited Adaptive Histogram Equalization)
+        val clahe = Imgproc.createCLAHE(2.0, Size(8.0, 8.0))
+        clahe.apply(gray, gray)
+
         // Apply Gaussian blur
         Imgproc.GaussianBlur(gray, gray, Size(9.0, 9.0), 2.0)
 
-        // Detect circles using Hough Transform
-        val circles = Mat()
-        Imgproc.HoughCircles(
-            gray,
-            circles,
-            Imgproc.HOUGH_GRADIENT,
-            1.0,                            // dp - inverse ratio of resolution
-            gray.rows() / 4.0,              // minDist - minimum distance between circles
-            100.0,                          // param1 - higher threshold for Canny edge detector
-            50.0,                           // param2 - accumulator threshold
-            gray.rows() / 8,                // minRadius
-            gray.rows() / 2                 // maxRadius
+        // Try multiple parameter sweeps to catch targets of different sizes/conditions
+        val allCircles = mutableListOf<Triple<Point, Double, Mat>>()
+        val imageSize = minOf(gray.rows(), gray.cols())
+
+        // Parameter sets: (param1, param2, minRadiusFactor, maxRadiusFactor)
+        val paramSets = listOf(
+            // Original parameters
+            Triple(100.0, 50.0, Pair(1.0/8, 1.0/2)),
+            // More lenient for faint edges
+            Triple(80.0, 40.0, Pair(1.0/10, 2.0/3)),
+            // Stricter for high-contrast images
+            Triple(120.0, 60.0, Pair(1.0/6, 1.0/2)),
+            // Small targets (far away)
+            Triple(80.0, 35.0, Pair(1.0/16, 1.0/4)),
+            // Large targets (close up)
+            Triple(100.0, 45.0, Pair(1.0/4, 3.0/4))
         )
 
-        Log.d(TAG, "Found ${circles.cols()} potential circles")
+        for ((param1, param2, radiusFactors) in paramSets) {
+            val circles = Mat()
+            val minRadius = (imageSize * radiusFactors.first).toInt()
+            val maxRadius = (imageSize * radiusFactors.second).toInt()
+
+            Imgproc.HoughCircles(
+                gray,
+                circles,
+                Imgproc.HOUGH_GRADIENT,
+                1.0,                            // dp - inverse ratio of resolution
+                gray.rows() / 8.0,              // minDist - allow closer circles for concentric detection
+                param1,                         // param1 - Canny edge threshold
+                param2,                         // param2 - accumulator threshold
+                minRadius,
+                maxRadius
+            )
+
+            if (circles.cols() > 0) {
+                for (i in 0 until circles.cols()) {
+                    val circle = circles.get(0, i) ?: continue
+                    if (circle.size >= 3) {
+                        allCircles.add(Triple(Point(circle[0], circle[1]), circle[2], mat))
+                    }
+                }
+            }
+            circles.release()
+        }
+
+        Log.d(TAG, "Found ${allCircles.size} potential circles across all parameter sweeps")
 
         var bestCircle: Triple<Point, Double, Double>? = null
         var bestScore = 0.0
 
-        // Evaluate each detected circle
-        for (i in 0 until circles.cols()) {
-            val circle = circles.get(0, i)
-            if (circle == null || circle.size < 3) continue
+        // Deduplicate circles that are very similar (same center within tolerance)
+        val uniqueCircles = deduplicateCircles(allCircles.map { Pair(it.first, it.second) })
 
-            val center = Point(circle[0], circle[1])
-            val radius = circle[2]
+        Log.d(TAG, "After deduplication: ${uniqueCircles.size} unique circles")
+
+        // Evaluate each detected circle
+        for ((index, circlePair) in uniqueCircles.withIndex()) {
+            val center = circlePair.first
+            val radius = circlePair.second
 
             // Validate circle by checking for target colors
             val colorScore = validateTargetColors(mat, center, radius)
@@ -108,7 +148,7 @@ class OpenCvTargetDetector : TargetDetector {
             val sizeBonus = (radius / gray.rows()) * 2.0
             val totalScore = colorScore + sizeBonus
 
-            Log.d(TAG, "Circle $i: center=(${center.x}, ${center.y}), radius=$radius, colorScore=$colorScore, sizeBonus=$sizeBonus, total=$totalScore")
+            Log.d(TAG, "Circle $index: center=(${center.x}, ${center.y}), radius=$radius, colorScore=$colorScore, sizeBonus=$sizeBonus, total=$totalScore")
 
             if (totalScore > bestScore) {
                 bestScore = totalScore
@@ -119,16 +159,59 @@ class OpenCvTargetDetector : TargetDetector {
         // Cleanup
         mat.release()
         gray.release()
-        circles.release()
 
         return bestCircle?.let { (center, radius, confidence) ->
-            Log.d(TAG, "Best circle: center=(${center.x}, ${center.y}), radius=$radius")
+            Log.d(TAG, "Best circle: center=(${center.x}, ${center.y}), radius=$radius, score=$confidence")
             TargetDetection(
                 center = PointF(center.x.toFloat(), center.y.toFloat()),
                 radius = radius.toFloat(),
-                confidence = (confidence / 4.0).toFloat().coerceIn(0f, 1f)  // 4 color checks now
+                confidence = (confidence / 5.0).toFloat().coerceIn(0f, 1f)  // Max score ~5 with graduated scoring
             )
         }
+    }
+
+    private fun deduplicateCircles(circles: List<Pair<Point, Double>>): List<Pair<Point, Double>> {
+        if (circles.isEmpty()) return emptyList()
+
+        val result = mutableListOf<Pair<Point, Double>>()
+        val used = BooleanArray(circles.size)
+
+        // Sort by radius descending - prefer larger circles
+        val sorted = circles.sortedByDescending { it.second }
+
+        for (i in sorted.indices) {
+            if (used[i]) continue
+
+            val (center1, radius1) = sorted[i]
+            var bestRadius = radius1
+            var bestCenter = center1
+
+            // Find all similar circles and keep the largest
+            for (j in i + 1 until sorted.size) {
+                if (used[j]) continue
+
+                val (center2, radius2) = sorted[j]
+                val centerDist = kotlin.math.sqrt(
+                    (center1.x - center2.x) * (center1.x - center2.x) +
+                    (center1.y - center2.y) * (center1.y - center2.y)
+                )
+
+                // If centers are close (within 20% of the average radius), consider them duplicates
+                val avgRadius = (radius1 + radius2) / 2
+                if (centerDist < avgRadius * 0.2) {
+                    used[j] = true
+                    if (radius2 > bestRadius) {
+                        bestRadius = radius2
+                        bestCenter = center2
+                    }
+                }
+            }
+
+            result.add(Pair(bestCenter, bestRadius))
+            used[i] = true
+        }
+
+        return result
     }
 
     private fun validateTargetColors(mat: Mat, center: Point, radius: Double): Double {
@@ -140,10 +223,16 @@ class OpenCvTargetDetector : TargetDetector {
             var score = 0.0
 
             // Check for gold/yellow near center (high scoring area)
+            // Use graduated scoring instead of binary pass/fail
             val goldMask = Mat()
             Core.inRange(hsv, GOLD_LOW, GOLD_HIGH, goldMask)
-            val goldRatio = countPixelsInRing(goldMask, center, 0.0, radius * 0.2)
-            if (goldRatio > 0.3) score += 1.0
+            val goldRatio = countPixelsInRing(goldMask, center, 0.0, radius * 0.25)
+            score += when {
+                goldRatio > 0.25 -> 1.0
+                goldRatio > 0.15 -> 0.7
+                goldRatio > 0.08 -> 0.4
+                else -> 0.0
+            }
 
             // Check for red in middle rings
             val redMask1 = Mat()
@@ -152,20 +241,43 @@ class OpenCvTargetDetector : TargetDetector {
             Core.inRange(hsv, RED_LOW_1, RED_HIGH_1, redMask1)
             Core.inRange(hsv, RED_LOW_2, RED_HIGH_2, redMask2)
             Core.bitwise_or(redMask1, redMask2, redMask)
-            val redRatio = countPixelsInRing(redMask, center, radius * 0.2, radius * 0.4)
-            if (redRatio > 0.2) score += 1.0
+            val redRatio = countPixelsInRing(redMask, center, radius * 0.2, radius * 0.45)
+            score += when {
+                redRatio > 0.15 -> 1.0
+                redRatio > 0.08 -> 0.6
+                redRatio > 0.03 -> 0.3
+                else -> 0.0
+            }
 
             // Check for blue in middle-outer rings
             val blueMask = Mat()
             Core.inRange(hsv, BLUE_LOW, BLUE_HIGH, blueMask)
-            val blueRatio = countPixelsInRing(blueMask, center, radius * 0.4, radius * 0.6)
-            if (blueRatio > 0.2) score += 1.0
+            val blueRatio = countPixelsInRing(blueMask, center, radius * 0.35, radius * 0.65)
+            score += when {
+                blueRatio > 0.15 -> 1.0
+                blueRatio > 0.08 -> 0.6
+                blueRatio > 0.03 -> 0.3
+                else -> 0.0
+            }
 
-            // Check for white in outermost rings (high value, low saturation)
+            // Check for black rings (scoring lines) - common on all targets
+            val blackMask = Mat()
+            Core.inRange(hsv, Scalar(0.0, 0.0, 0.0), Scalar(180.0, 255.0, 50.0), blackMask)
+            val blackRatio = countPixelsInRing(blackMask, center, radius * 0.1, radius * 0.9)
+            // Some black pixels indicate scoring rings - but not too many (that would be a dark blob)
+            if (blackRatio > 0.02 && blackRatio < 0.25) score += 0.5
+
+            // Check for white/light areas (outer rings or between colored rings)
             val whiteMask = Mat()
-            Core.inRange(hsv, Scalar(0.0, 0.0, 180.0), Scalar(180.0, 50.0, 255.0), whiteMask)
-            val whiteRatio = countPixelsInRing(whiteMask, center, radius * 0.8, radius * 1.0)
-            if (whiteRatio > 0.15) score += 1.0
+            Core.inRange(hsv, Scalar(0.0, 0.0, 160.0), Scalar(180.0, 60.0, 255.0), whiteMask)
+            val whiteRatio = countPixelsInRing(whiteMask, center, radius * 0.7, radius * 1.0)
+            score += when {
+                whiteRatio > 0.12 -> 0.5
+                whiteRatio > 0.05 -> 0.3
+                else -> 0.0
+            }
+
+            blackMask.release()
 
             // Cleanup
             hsv.release()

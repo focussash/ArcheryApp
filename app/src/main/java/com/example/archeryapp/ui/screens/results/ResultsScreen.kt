@@ -57,9 +57,15 @@ import kotlin.math.sin
 fun ResultsScreen(
     scoringResult: ScoringResult,
     onNewScan: () -> Unit,
+    initialSessionId: Long? = null,
     viewModel: ResultsViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+
+    // Set initial session ID when first composing
+    LaunchedEffect(initialSessionId) {
+        viewModel.setInitialSessionId(initialSessionId)
+    }
 
     // Auto-dismiss success message after delay
     LaunchedEffect(uiState.saveSuccess) {
