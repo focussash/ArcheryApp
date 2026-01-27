@@ -2,7 +2,13 @@
   "permissions": {
     "allow": [
       "Bash(dir:*)",
-      "Bash(.\\\\gradlew.bat assembleDebug:*)"
+      "Bash(.\\\\gradlew.bat assembleDebug:*)",
+      "Bash(.\\\\gradlew build:*)",
+      "Bash(./gradlew.bat build:*)",
+      "Bash(gradlew.bat build:*)",
+      "Bash(./gradlew build:*)",
+      "Bash(./gradlew compileDebugKotlin:*)",
+      "Bash(./gradlew:*)"
     ]
   }
 }
