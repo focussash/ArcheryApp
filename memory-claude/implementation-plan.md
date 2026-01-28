@@ -1069,14 +1069,24 @@ data class PoseResult(
 - Claude shows all available visual evidence (screenshots, logs, etc.)
 - User confirms real-device testing complete before proceeding
 
-## Step Execution Workflow
+## Step Execution Workflow - MANDATORY CHECKLIST
 
-1. **During a step**: Claude proceeds with all necessary edits without asking permission
-2. **After completing edits**: Claude runs tests (build, unit tests, etc.)
-3. **Show results**: Claude displays test results with visual evidence where possible
-4. **Inform user**: Claude reports completion status and test results
-5. **For Major steps**: User tests on real phone
-6. **Permission**: User grants permission to proceed to next step
+For EACH step, complete ALL of the following before proceeding:
+
+□ 1. Complete all code edits for the step
+□ 2. Run build: `./gradlew assembleDebug`
+□ 3. Show build output to user (task count, time, success/failure)
+□ 4. Update architecture.md with session notes
+□ 5. Inform user: "Step X complete. [Summary]. Ready for next step?"
+□ 6. WAIT for user approval before proceeding
+
+⚠️ **VIOLATION**: Proceeding to next step without completing checklist
+⚠️ **VIOLATION**: Batching multiple steps without user approval between each
+⚠️ **VIOLATION**: Skipping build validation or not showing output
+
+### Additional Requirements for Major Steps
+- User must test on real phone before granting approval
+- Wait for user to confirm real-device testing complete
 
 ## Testing Strategy
 - **Unit Tests**: Domain logic, use cases, calculators

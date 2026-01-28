@@ -1,10 +1,8 @@
-package com.example.archeryapp.ui.screens.history
+package com.example.archeryapp.ui.screens.calendar
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,63 +17,69 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CalendarMonth
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.archeryapp.domain.model.End
+import com.example.archeryapp.ui.screens.history.SessionWithEnds
+import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HistoryScreen(
-    onNavigateToCalendar: () -> Unit = {},
-    viewModel: HistoryViewModel = viewModel()
+fun DayDetailScreen(
+    date: LocalDate,
+    onNavigateBack: () -> Unit,
+    onAddScore: () -> Unit = {},
+    viewModel: DayDetailViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        TopAppBar(
-            title = { Text("History") },
-            actions = {
-                IconButton(onClick = onNavigateToCalendar) {
-                    Icon(
-                        imageVector = Icons.Default.CalendarMonth,
-                        contentDescription = "Calendar view"
-                    )
+    LaunchedEffect(date) {
+        viewModel.loadSessionsForDate(date)
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            TopAppBar(
+                title = {
+                    Text(date.format(DateTimeFormatter.ofPattern("EEEE, MMM d, yyyy")))
+                },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                    }
                 }
-            }
-        )
-        Box(
-            modifier = Modifier.fillMaxSize()
-        ) {
+            )
+
             when {
                 uiState.isLoading -> {
                     CircularProgressIndicator(
-                        modifier = Modifier.align(Alignment.Center)
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp)
+                            .align(Alignment.CenterHorizontally)
                     )
                 }
                 uiState.sessions.isEmpty() -> {
@@ -87,19 +91,22 @@ fun HistoryScreen(
                         verticalArrangement = Arrangement.Center
                     ) {
                         Text(
-                            text = "No sessions yet",
+                            text = "No sessions on this day",
                             style = MaterialTheme.typography.titleLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Start scoring to see your history",
+                            text = "Tap + to add a score",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                         )
                     }
                 }
                 else -> {
+                    // Day summary card
+                    DaySummaryCard(sessions = uiState.sessions)
+
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
@@ -109,81 +116,95 @@ fun HistoryScreen(
                             items = uiState.sessions,
                             key = { it.id }
                         ) { session ->
-                            SwipeToDeleteHistoryCard(
+                            DaySessionCard(
                                 session = session,
                                 isExpanded = session.id in uiState.expandedSessionIds,
-                                onToggleExpand = { viewModel.toggleSessionExpanded(session.id) },
-                                onDelete = { viewModel.deleteSession(session.id) }
+                                onToggleExpand = { viewModel.toggleSessionExpanded(session.id) }
                             )
                         }
                     }
                 }
             }
         }
+
+        // FAB for adding scores
+        FloatingActionButton(
+            onClick = onAddScore,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(16.dp)
+        ) {
+            Icon(Icons.Default.Add, contentDescription = "Add Score")
+        }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SwipeToDeleteHistoryCard(
-    session: SessionWithEnds,
-    isExpanded: Boolean,
-    onToggleExpand: () -> Unit,
-    onDelete: () -> Unit
-) {
-    val dismissState = rememberSwipeToDismissBoxState(
-        confirmValueChange = { dismissValue ->
-            if (dismissValue == SwipeToDismissBoxValue.EndToStart) {
-                onDelete()
-                true
-            } else {
-                false
+private fun DaySummaryCard(sessions: List<SessionWithEnds>) {
+    val totalScore = sessions.sumOf { it.totalScore }
+    val totalArrows = sessions.sumOf { it.totalArrows }
+    val totalXCount = sessions.sumOf { it.xCount }
+    val average = if (totalArrows > 0) totalScore.toFloat() / totalArrows else 0f
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "Day Summary",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceAround
+            ) {
+                SummaryItem(label = "Sessions", value = "${sessions.size}")
+                SummaryItem(label = "Arrows", value = "$totalArrows")
+                SummaryItem(label = "Score", value = "$totalScore")
+                SummaryItem(label = "Average", value = "%.1f".format(average))
+                if (totalXCount > 0) {
+                    SummaryItem(label = "X's", value = "$totalXCount")
+                }
             }
         }
-    )
+    }
+}
 
-    SwipeToDismissBox(
-        state = dismissState,
-        backgroundContent = {
-            val color by animateColorAsState(
-                when (dismissState.targetValue) {
-                    SwipeToDismissBoxValue.EndToStart -> MaterialTheme.colorScheme.error
-                    else -> Color.Transparent
-                },
-                label = "swipe_color"
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(color)
-                    .padding(horizontal = 20.dp),
-                contentAlignment = Alignment.CenterEnd
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "Delete",
-                    tint = MaterialTheme.colorScheme.onError
-                )
-            }
-        },
-        enableDismissFromStartToEnd = false,
-        enableDismissFromEndToStart = true
-    ) {
-        HistorySessionCard(
-            session = session,
-            isExpanded = isExpanded,
-            onToggleExpand = onToggleExpand
+@Composable
+private fun SummaryItem(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onPrimaryContainer
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
         )
     }
 }
 
 @Composable
-private fun HistorySessionCard(
+private fun DaySessionCard(
     session: SessionWithEnds,
     isExpanded: Boolean,
     onToggleExpand: () -> Unit
 ) {
-    val dateFormatter = DateTimeFormatter.ofPattern("MMM d, yyyy")
     val timeFormatter = DateTimeFormatter.ofPattern("h:mm a")
 
     Card(
@@ -197,7 +218,6 @@ private fun HistorySessionCard(
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
-            // Header row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -205,15 +225,17 @@ private fun HistorySessionCard(
             ) {
                 Column {
                     Text(
-                        text = session.date.format(dateFormatter),
+                        text = session.date.format(timeFormatter),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
-                    Text(
-                        text = session.date.format(timeFormatter),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    if (session.distance != null || session.bowType != null) {
+                        Text(
+                            text = listOfNotNull(session.distance, session.bowType).joinToString(" - "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -244,7 +266,6 @@ private fun HistorySessionCard(
                 }
             }
 
-            // Summary row
             Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -265,15 +286,6 @@ private fun HistorySessionCard(
                 }
             }
 
-            if (session.distance != null || session.bowType != null) {
-                Text(
-                    text = listOfNotNull(session.distance, session.bowType).joinToString(" - "),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            // Expandable ends section
             AnimatedVisibility(
                 visible = isExpanded,
                 enter = expandVertically(),
@@ -283,7 +295,6 @@ private fun HistorySessionCard(
                     HorizontalDivider()
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Ends table header
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -312,7 +323,6 @@ private fun HistorySessionCard(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // End rows
                     session.ends.forEach { end ->
                         EndRow(end = end)
                         Spacer(modifier = Modifier.height(4.dp))

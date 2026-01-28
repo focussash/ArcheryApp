@@ -7,16 +7,31 @@ Updated after each completed step/subproject.
 
 ## Current Status
 
-**Phase:** 1 - Core Scoring & Persistence
-**Current Step:** 1.6.3 Arrow Detection Complete - Ready for Device Testing
-**Last Updated:** 2026-01-26
+**Phase:** 2 - Progress Tracking + Bug Fixes (COMPLETE)
+**Current Step:** Phase 2 Bug Fixes fully implemented
+**Last Updated:** 2026-01-28
+
+### Known Issues (To Revisit)
+- HoughCircles still takes ~57 seconds even with 2 sweeps on 1200px image
+- May need to try: single sweep, lower resolution, or alternative detection approach
+- Detection accuracy also needs improvement - defer to later iteration
 
 ---
 
 ## Completed Work
 
-### Session: [Date]
-*(No entries yet - add entries as work is completed)*
+### Session: 2026-01-27 - Detection & UX Improvements
+**Summary of changes:**
+1. Fixed bottom navigation padding (nested Scaffold + NavigationBar windowInsets)
+2. Implemented progress indicator for image analysis (shows current step)
+3. Added detailed timing logs throughout detection pipeline
+4. Added image downscaling for target detection (1200px max)
+5. Added image cropping for arrow detection (target region only at full res)
+6. Reduced HoughCircles from 5 sweeps to 2
+7. Made color validation work with partial/zoomed targets
+
+**Outcome:** Detection still slow (~57s for HoughCircles) - paused for later optimization.
+User can now see progress updates during analysis instead of indefinite "Analyzing..."
 
 ---
 
@@ -129,15 +144,56 @@ app/src/main/java/com/example/archeryapp/
 | 1.5.2 History Navigation | Complete | Integrated with bottom nav |
 | 1.5.3 Bottom Navigation | Complete | Score, History, Settings tabs |
 
-#### 1.6 Detection Improvements
+#### 1.6 Detection Improvements (PAUSED - revisit later)
 | Step | Status | Notes |
 |------|--------|-------|
 | 1.6.1 Analysis | Complete | Documented issues with target/arrow detection |
-| 1.6.2 Target Detection | Complete | CLAHE normalization, multi-param sweeps, graduated color scoring |
-| 1.6.3 Arrow Detection | Complete | Dynamic scaling, multi-Canny thresholds, MIN_GROUP_SIZE=2 |
-| 1.6.4 Confidence UI | Pending | |
+| 1.6.2 Target Detection | Complete | CLAHE, 2 sweeps (reduced from 5), partial target support |
+| 1.6.3 Arrow Detection | Complete | Dynamic scaling, 3 Canny thresholds, cropped region |
+| 1.6.4 Confidence UI | Skipped | Deferred - focus on speed first |
+| Performance | BLOCKED | HoughCircles still ~57s on 1200px - needs different approach |
 
-### Phase 2: Progress Tracking (Not Started)
+### Phase 2: Progress Tracking (Complete)
+
+#### 2.0 Auto-Detection Toggle
+| Step | Status | Notes |
+|------|--------|-------|
+| 2.0.1 Auto-detect state | Complete | Added `autoDetectEnabled` state to HomeViewModel |
+| 2.0.2 Toggle UI | Complete | Added toggle switch on HomeScreen |
+| 2.0.3 Navigation routing | Complete | Routes to ArrowEdit or Review based on preference |
+
+#### 2.1 Calendar View
+| Step | Status | Notes |
+|------|--------|-------|
+| 2.1.1 CalendarScreen | Complete | Monthly calendar view with session indicators |
+| 2.1.2 CalendarViewModel | Complete | Loads sessions grouped by date |
+| 2.1.3 DayDetailScreen | Complete | Shows all sessions for selected day |
+| 2.1.4 DayDetailViewModel | Complete | Loads sessions for specific date |
+| 2.1.5 History integration | Complete | Added calendar icon to HistoryScreen |
+| 2.1.6 Navigation | Complete | Added Calendar and DayDetail routes |
+
+**Dependency:** kizitonwose calendar 2.5.0
+
+#### 2.2 Statistics Screen
+| Step | Status | Notes |
+|------|--------|-------|
+| 2.2.1 StatisticsScreen | Complete | Charts and statistics display |
+| 2.2.2 StatisticsViewModel | Complete | Aggregates data for charts |
+| 2.2.3 StatisticsRepository | Complete | Statistics queries and calculations |
+| 2.2.4 DAO updates | Complete | Added statistics queries to DAOs |
+| 2.2.5 Bottom nav | Complete | Added 4th tab for Statistics |
+
+**Dependency:** Vico charts 1.13.1
+
+#### 2.3 Data Export/Import
+| Step | Status | Notes |
+|------|--------|-------|
+| 2.3.1 DataExportService | Complete | Exports sessions to JSON |
+| 2.3.2 DataImportService | Complete | Imports sessions from JSON |
+| 2.3.3 SettingsViewModel | Complete | Handles export/import actions |
+| 2.3.4 SettingsScreen | Complete | Complete rewrite with export/import UI |
+
+**Dependency:** kotlinx.serialization 1.6.3
 
 ### Phase 3: M5Stick Integration (Not Started)
 
@@ -450,3 +506,239 @@ app/src/main/java/com/example/archeryapp/
 - detection/opencv/OpenCvArrowDetector.kt
 
 **Build Status:** Successful
+
+### 2026-01-27 - Progress Indicator and Timing Diagnostics [COMPLETE]
+**Problem:** Image analysis was taking 6+ minutes with no progress feedback - user couldn't tell if it was stuck or working.
+
+**What was implemented:**
+- Added `AnalysisStep` enum to track current phase (PREPARING, DETECTING_TARGET, DETECTING_ARROWS, CALCULATING_SCORES, etc.)
+- Added detailed progress messages that update in real-time
+- Added timing display after completion showing: Target detection time, Arrow detection time, Total time
+- Added `[TIMING]` logs throughout detectors for debugging:
+  - OpenCvTargetDetector: logs each of 5 HoughCircles parameter sweeps with duration
+  - OpenCvArrowDetector: logs each of 3 Canny+HoughLinesP sweeps with duration
+  - Both log preprocessing steps (bitmapToMat, grayscale, CLAHE, GaussianBlur)
+
+**UI Changes:**
+- Progress screen now shows current step: "Detecting target...", "Detecting arrows...", etc.
+- Sub-detail text shows additional info like image dimensions
+- Results screen shows timing info for debugging
+
+**Files modified:**
+- ui/screens/review/ReviewScreen.kt (progress states, timing, UI updates)
+- detection/opencv/OpenCvTargetDetector.kt (timing logs for each sweep)
+- detection/opencv/OpenCvArrowDetector.kt (timing logs for each sweep)
+
+**Note:** The 6-minute detection time is likely caused by the 5+3 parameter sweeps added in 1.6.2/1.6.3. Timing logs will help identify which sweeps are slow so we can optimize later.
+
+**Build Status:** Successful
+
+### 2026-01-27 - Image Downscaling/Cropping Optimization [COMPLETE]
+**Problem:** Detection was taking 6+ minutes on high-resolution images (e.g., 4000x3000 from phone cameras).
+
+**Solution - Hybrid approach:**
+1. **Target detection**: Downscale image to max 1200px on longest side
+   - Circles are large features, easy to detect at lower resolution
+   - Scale factor calculated, coordinates scaled back to original after detection
+2. **Arrow detection**: Crop to target region at FULL resolution
+   - Uses 1.3x target radius as margin for crop
+   - Preserves full detail for small arrow tips
+   - Much fewer pixels to process (target area vs whole image)
+
+**Implementation:**
+- `TARGET_DETECTION_MAX_SIZE = 1200` - max dimension for target detection
+- `ARROW_CROP_MARGIN = 1.3f` - crop region = target radius * 1.3
+- Downscaled bitmap created with `Bitmap.createScaledBitmap()`
+- Cropped bitmap created with `Bitmap.createBitmap(src, x, y, w, h)`
+- Coordinates adjusted when scaling back to original image space
+
+**Expected speedup:**
+- 4000x3000 → 1200x900 for target = ~11x fewer pixels
+- Arrow detection on ~2000x2000 crop instead of 4000x3000 = ~2-3x fewer pixels
+
+**Files modified:**
+- ui/screens/review/ReviewScreen.kt
+
+**Build Status:** Successful
+
+### 2026-01-27 - HoughCircles Optimization + Partial Target Support [COMPLETE]
+**Problem:**
+1. HoughCircles with 5 sweeps was still slow even on 1200px image
+2. Color validation required all rings (gold/red/blue/black/white) - failed when user zoomed in on center
+
+**Changes:**
+1. **Reduced HoughCircles from 5 sweeps to 2:**
+   - Sweep 1: Balanced parameters (p1=100, p2=50)
+   - Sweep 2: Lenient parameters (p1=70, p2=35)
+   - Should reduce HoughCircles time by ~60%
+
+2. **Updated color validation for partial targets:**
+   - Gold (center): Highest weight (up to 2.0 score) - most likely visible when zoomed
+   - Red (inner): High weight (up to 1.5 score)
+   - Blue (middle): Medium weight (up to 1.0 score) - may be cropped
+   - Black lines: Bonus only (0.5) - helpful but not required
+   - White (outer): Bonus only (0.5) - often cropped out
+   - Extra bonus (0.5) if any target colors detected
+   - Added logging of color ratios for debugging
+
+**Files modified:**
+- detection/opencv/OpenCvTargetDetector.kt
+- ui/screens/review/ReviewScreen.kt (progress message update)
+
+**Build Status:** Successful
+
+### 2026-01-27 - Phase 2 Step 0: Auto-Detection Toggle [COMPLETE]
+**What was implemented:**
+- Added `autoDetectEnabled` state to HomeViewModel with persistence
+- Added toggle switch UI on HomeScreen for enabling/disabling auto-detection
+- Updated navigation to route to ArrowEditScreen or ReviewScreen based on toggle state
+
+**Files modified:**
+- ui/screens/home/HomeViewModel.kt (added autoDetectEnabled state)
+- ui/screens/home/HomeScreen.kt (added toggle UI)
+- ui/navigation/AppNavigation.kt (conditional navigation routing)
+
+### 2026-01-27 - Phase 2 Step 1: Calendar View [COMPLETE]
+**What was implemented:**
+- CalendarScreen with monthly view showing dots on days with sessions
+- CalendarViewModel for loading sessions and grouping by date
+- DayDetailScreen showing all sessions for a selected day
+- DayDetailViewModel for loading sessions for a specific date
+- Added calendar icon button to HistoryScreen header
+- Navigation routes for Calendar and DayDetail screens
+
+**Files created:**
+- ui/screens/calendar/CalendarScreen.kt
+- ui/screens/calendar/CalendarViewModel.kt
+- ui/screens/calendar/DayDetailScreen.kt
+- ui/screens/calendar/DayDetailViewModel.kt
+
+**Files modified:**
+- ui/screens/history/HistoryScreen.kt (added calendar icon)
+- ui/navigation/AppNavigation.kt (added Calendar, DayDetail routes)
+- gradle/libs.versions.toml (added kizitonwose calendar 2.5.0)
+- app/build.gradle.kts (added calendar dependency)
+
+### 2026-01-27 - Phase 2 Step 2: Statistics Screen [COMPLETE]
+**What was implemented:**
+- StatisticsScreen with charts showing score trends, averages, and distributions
+- StatisticsViewModel for aggregating statistics data
+- StatisticsRepository for statistics queries and calculations
+- Added statistics queries to SessionDao, EndDao, ArrowScoreDao
+- Added Statistics as 4th tab in BottomNavBar
+
+**Files created:**
+- ui/screens/statistics/StatisticsScreen.kt
+- ui/screens/statistics/StatisticsViewModel.kt
+- data/repository/StatisticsRepository.kt
+
+**Files modified:**
+- ui/components/BottomNavBar.kt (added Statistics tab)
+- ui/navigation/AppNavigation.kt (added Statistics route)
+- data/local/dao/SessionDao.kt (added statistics queries)
+- data/local/dao/EndDao.kt (added statistics queries)
+- data/local/dao/ArrowScoreDao.kt (added statistics queries)
+- gradle/libs.versions.toml (added Vico charts 1.13.1)
+- app/build.gradle.kts (added Vico dependency)
+
+### 2026-01-27 - Phase 2 Step 3: Data Export/Import [COMPLETE]
+**What was implemented:**
+- DataExportService for exporting all sessions to JSON format
+- DataImportService for importing sessions from JSON with conflict handling
+- SettingsViewModel for managing export/import operations
+- Complete rewrite of SettingsScreen with export/import UI, file pickers, and feedback
+
+**Files created:**
+- data/export/DataExportService.kt
+- data/export/DataImportService.kt
+- ui/screens/settings/SettingsViewModel.kt
+
+**Files modified:**
+- ui/screens/settings/SettingsScreen.kt (complete rewrite)
+- gradle/libs.versions.toml (added kotlinx.serialization 1.6.3)
+- app/build.gradle.kts (added serialization plugin and dependency)
+
+**Phase 2 Complete:** All progress tracking features implemented.
+
+### 2026-01-28 - Phase 2 Bug Fixes and UI Improvements [COMPLETE]
+
+#### Step 3: Fix Calendar Crash [COMPLETE]
+**Problem:** CalendarViewModel.loadSessions() called getEndsForSessionSync() in a loop, causing ANR on large datasets.
+
+**Solution:**
+- Replaced N+1 query pattern with optimized batch queries
+- Added `getArrowCountForSession()` to ArrowScoreDao
+- Use `Dispatchers.IO` for database operations
+- Removed dependency on ScoreRepository in CalendarViewModel
+
+**Files modified:**
+- `ui/screens/calendar/CalendarViewModel.kt` - Use optimized queries
+- `data/local/dao/ArrowScoreDao.kt` - Added `getArrowCountForSession()`, `deleteAll()`
+
+#### Step 4: Fix Statistics Score Trend Bug [COMPLETE]
+**Problem:** getSessionTrends() grouped sessions by date, so multiple same-day sessions = 1 data point.
+
+**Solution:**
+- Changed to return individual sessions instead of grouping by date
+- Added `sessionId` and `timestamp` fields to `SessionTrendData`
+- Sort by timestamp for correct chronological order
+
+**Files modified:**
+- `data/repository/StatisticsRepository.kt` - Rewrote `getSessionTrends()` to not group by date
+
+#### Step 5: Add Wipe All Data Feature [COMPLETE]
+**What was implemented:**
+- Added `deleteAll()` methods to SessionDao, EndDao, ArrowScoreDao
+- Added `wipeAllData()` function to SettingsViewModel
+- Added "Danger Zone" section in SettingsScreen with confirmation dialog
+- Delete order respects foreign key constraints (arrows → ends → sessions)
+
+**Files modified:**
+- `data/local/dao/SessionDao.kt` - Added `deleteAll()`
+- `data/local/dao/EndDao.kt` - Added `deleteAll()`
+- `data/local/dao/ArrowScoreDao.kt` - Added `deleteAll()`
+- `ui/screens/settings/SettingsViewModel.kt` - Added `wipeAllData()`, `isWiping`/`wipeSuccess` state
+- `ui/screens/settings/SettingsScreen.kt` - Added wipe data card and confirmation dialog
+
+#### Step 1: HomeScreen UI Redesign [COMPLETE]
+**Problem:** Auto-detect toggle was confusing. Users wanted explicit "take picture" vs "manual input" options.
+
+**Solution:**
+- Removed `AutoDetectToggle` composable
+- Removed `autoDetectEnabled` state from HomeViewModel
+- Replaced with two side-by-side buttons: "Take Picture" and "Input Score"
+- Removed "Upload Image" button (moved to calendar)
+
+**Files modified:**
+- `ui/screens/home/HomeScreen.kt` - New button layout, removed toggle
+- `ui/screens/home/HomeViewModel.kt` - Removed `autoDetectEnabled` state
+- `ui/navigation/AppNavigation.kt` - Updated callbacks
+
+#### Step 2: Create Score Input Screens [COMPLETE]
+**What was implemented:**
+- `ScoreInputMethodScreen` - Selection screen with "Place on Target" and "Enter Numbers" options
+- `NumericScoreInputScreen` - Grid of score buttons (X, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, M)
+  - Arrow chips display with tap-to-remove
+  - Color-coded buttons matching target ring colors
+  - Creates ScoringResult for Results screen
+
+**Files created:**
+- `ui/screens/scoreinput/ScoreInputMethodScreen.kt`
+- `ui/screens/scoreinput/NumericScoreInputScreen.kt`
+
+**Files modified:**
+- `ui/navigation/AppNavigation.kt` - Added `ScoreInputMethod`, `NumericScoreInput` routes
+
+#### Step 6: Move Upload Image to Calendar [COMPLETE]
+**What was implemented:**
+- Added FAB with "+" icon to DayDetailScreen
+- FAB navigates to ScoreInputMethodScreen
+- Users can add scores from calendar day view
+
+**Files modified:**
+- `ui/screens/calendar/DayDetailScreen.kt` - Added FAB, `onAddScore` callback
+- `ui/navigation/AppNavigation.kt` - Connected DayDetail FAB to ScoreInputMethod
+
+**Build Status:** Successful (`./gradlew assembleDebug` - 38 tasks)
+
+**Phase 2 Bug Fixes Complete:** All bug fixes and UI improvements implemented.

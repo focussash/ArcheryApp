@@ -39,4 +39,11 @@ interface SessionDao {
 
     @Query("DELETE FROM sessions WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    // Statistics queries
+    @Query("SELECT COUNT(*) FROM sessions")
+    suspend fun getTotalSessionCount(): Int
+
+    @Query("DELETE FROM sessions")
+    suspend fun deleteAll()
 }

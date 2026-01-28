@@ -60,6 +60,8 @@ import kotlin.math.min
 
 private const val TAG = "ReviewScreen"
 private const val ANALYSIS_TIMEOUT_MS = 15_000L  // 15 second timeout
+private const val TARGET_DETECTION_MAX_SIZE = 1200  // Downscale for target detection
+private const val ARROW_CROP_MARGIN = 1.3f  // Crop margin around target for arrow detection
 
 private enum class AnalysisStep {
     PREPARING,
@@ -79,51 +81,155 @@ fun ReviewScreen(
     onRetake: () -> Unit
 ) {
     var isProcessing by remember { mutableStateOf(true) }
+    var analysisStep by remember { mutableStateOf(AnalysisStep.PREPARING) }
+    var progressDetail by remember { mutableStateOf("Initializing...") }
     var targetDetection by remember { mutableStateOf<TargetDetection?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val arrowDetections = remember { mutableStateListOf<ArrowDetection>() }
     var imageWidth by remember { mutableFloatStateOf(0f) }
     var imageHeight by remember { mutableFloatStateOf(0f) }
+    var timingInfo by remember { mutableStateOf("") }
 
     val scoreCalculator = remember { ScoreCalculator() }
 
     // Process image on launch
     LaunchedEffect(capturedImage) {
+        val totalStartTime = System.currentTimeMillis()
         try {
             val imgWidth = capturedImage.width.toFloat()
             val imgHeight = capturedImage.height.toFloat()
             imageWidth = imgWidth
             imageHeight = imgHeight
 
+            progressDetail = "Image: ${imgWidth.toInt()}x${imgHeight.toInt()}"
             Log.d(TAG, "Processing image: ${imgWidth}x${imgHeight}")
 
+            // Target detection phase - use downscaled image for speed
+            analysisStep = AnalysisStep.DETECTING_TARGET
+
+            // Calculate scale factor for target detection
+            val maxDim = maxOf(imgWidth, imgHeight)
+            val targetDetectionScale = if (maxDim > TARGET_DETECTION_MAX_SIZE) {
+                TARGET_DETECTION_MAX_SIZE / maxDim
+            } else {
+                1f
+            }
+
+            val scaledWidth = (imgWidth * targetDetectionScale).toInt()
+            val scaledHeight = (imgHeight * targetDetectionScale).toInt()
+            progressDetail = "Downscaling to ${scaledWidth}x${scaledHeight}..."
+            Log.d(TAG, "Target detection scale: $targetDetectionScale (${scaledWidth}x${scaledHeight})")
+
+            val targetStartTime = System.currentTimeMillis()
+
+            // Step 1: Downscale bitmap (separate from OpenCV detection)
+            val scaledBitmap = withContext(Dispatchers.IO) {
+                if (targetDetectionScale < 1f) {
+                    val scaleStart = System.currentTimeMillis()
+                    val result = Bitmap.createScaledBitmap(capturedImage, scaledWidth, scaledHeight, true)
+                    Log.d(TAG, "[TIMING] Bitmap scaling: ${System.currentTimeMillis() - scaleStart}ms")
+                    result
+                } else {
+                    capturedImage
+                }
+            }
+            val scaleDuration = System.currentTimeMillis() - targetStartTime
+            progressDetail = "Scaled in ${scaleDuration}ms. Running HoughCircles (2 sweeps)..."
+            Log.d(TAG, "Bitmap scaling complete: ${scaleDuration}ms")
+
+            // Step 2: Run OpenCV target detection
+            val opencvStartTime = System.currentTimeMillis()
             val target = withContext(Dispatchers.IO) {
                 try {
                     val targetDetector = OpenCvTargetDetector()
-                    targetDetector.detect(capturedImage)
+                    val scaledTarget = targetDetector.detect(scaledBitmap)
+
+                    // Scale target coordinates back to original image size
+                    scaledTarget?.let {
+                        TargetDetection(
+                            center = PointF(it.center.x / targetDetectionScale, it.center.y / targetDetectionScale),
+                            radius = it.radius / targetDetectionScale,
+                            confidence = it.confidence
+                        )
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "Target detection failed", e)
                     null
                 }
             }
 
+            val opencvDuration = System.currentTimeMillis() - opencvStartTime
+            val targetDuration = System.currentTimeMillis() - targetStartTime
+            Log.d(TAG, "Target detection took ${targetDuration}ms (scale: ${scaleDuration}ms, opencv: ${opencvDuration}ms)")
+
             if (target != null) {
-                Log.d(TAG, "Target detected: center=(${target.center.x}, ${target.center.y}), radius=${target.radius}")
+                Log.d(TAG, "Target detected: center=(${target.center.x}, ${target.center.y}), radius=${target.radius}, confidence=${target.confidence}")
                 targetDetection = target
+                progressDetail = "Target found (${targetDuration}ms)"
+
+                // Arrow detection phase - use cropped full-resolution image
+                analysisStep = AnalysisStep.DETECTING_ARROWS
+
+                // Calculate crop region around target
+                val cropMargin = target.radius * ARROW_CROP_MARGIN
+                val cropLeft = (target.center.x - cropMargin).toInt().coerceAtLeast(0)
+                val cropTop = (target.center.y - cropMargin).toInt().coerceAtLeast(0)
+                val cropRight = (target.center.x + cropMargin).toInt().coerceAtMost(imgWidth.toInt())
+                val cropBottom = (target.center.y + cropMargin).toInt().coerceAtMost(imgHeight.toInt())
+                val cropWidth = cropRight - cropLeft
+                val cropHeight = cropBottom - cropTop
+
+                progressDetail = "Cropping to ${cropWidth}x${cropHeight} for arrow detection..."
+                Log.d(TAG, "Arrow detection crop: ($cropLeft,$cropTop) to ($cropRight,$cropBottom) = ${cropWidth}x${cropHeight}")
+
+                val arrowStartTime = System.currentTimeMillis()
 
                 val arrows = withContext(Dispatchers.IO) {
                     try {
+                        // Crop to target region at full resolution
+                        val croppedBitmap = Bitmap.createBitmap(
+                            capturedImage, cropLeft, cropTop, cropWidth, cropHeight
+                        )
+
+                        // Create adjusted target for cropped image
+                        val croppedTarget = TargetDetection(
+                            center = PointF(target.center.x - cropLeft, target.center.y - cropTop),
+                            radius = target.radius,
+                            confidence = target.confidence
+                        )
+
                         val arrowDetector = OpenCvArrowDetector()
-                        arrowDetector.detect(capturedImage, target)
+                        val croppedArrows = arrowDetector.detect(croppedBitmap, croppedTarget)
+
+                        // Adjust arrow coordinates back to original image
+                        croppedArrows.map { arrow ->
+                            ArrowDetection(
+                                position = PointF(arrow.position.x + cropLeft, arrow.position.y + cropTop),
+                                confidence = arrow.confidence
+                            )
+                        }
                     } catch (e: Exception) {
                         Log.e(TAG, "Arrow detection failed", e)
                         emptyList()
                     }
                 }
 
+                val arrowDuration = System.currentTimeMillis() - arrowStartTime
+                Log.d(TAG, "Arrow detection took ${arrowDuration}ms")
+
                 arrowDetections.clear()
                 arrowDetections.addAll(arrows)
+                progressDetail = "Found ${arrows.size} arrows (${arrowDuration}ms)"
                 Log.d(TAG, "Detected ${arrows.size} arrows")
+
+                // Calculate scores
+                analysisStep = AnalysisStep.CALCULATING_SCORES
+                progressDetail = "Calculating scores..."
+
+                val totalDuration = System.currentTimeMillis() - totalStartTime
+                timingInfo = "Scale: ${scaleDuration}ms | HoughCircles: ${opencvDuration}ms | Arrows: ${arrowDuration}ms | Total: ${totalDuration}ms"
+                Log.d(TAG, "Total processing time: ${totalDuration}ms")
+
             } else {
                 Log.w(TAG, "No target detected - creating default target at image center")
                 val defaultTarget = TargetDetection(
@@ -132,19 +238,25 @@ fun ReviewScreen(
                     confidence = 0f
                 )
                 targetDetection = defaultTarget
-                errorMessage = "Target not auto-detected. Use Edit Arrows to add manually."
+                errorMessage = "Target not auto-detected (took ${targetDuration}ms). Use Edit Arrows to add manually."
+                timingInfo = "Target detection: ${targetDuration}ms (no target found)"
             }
+
+            analysisStep = AnalysisStep.COMPLETE
         } catch (e: Exception) {
             Log.e(TAG, "Image processing failed", e)
+            analysisStep = AnalysisStep.FAILED
             val defaultTarget = TargetDetection(
                 center = PointF(imageWidth / 2f, imageHeight / 2f),
                 radius = minOf(imageWidth, imageHeight) / 2.5f,
                 confidence = 0f
             )
             targetDetection = defaultTarget
-            errorMessage = "Auto-detection failed. Use Edit Arrows to add manually."
+            errorMessage = "Auto-detection failed: ${e.message}. Use Edit Arrows to add manually."
         } finally {
             isProcessing = false
+            val totalDuration = System.currentTimeMillis() - totalStartTime
+            Log.d(TAG, "Analysis complete. Total time: ${totalDuration}ms")
         }
     }
 
@@ -169,7 +281,22 @@ fun ReviewScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator()
                     Spacer(modifier = Modifier.height(16.dp))
-                    Text("Analyzing image...")
+                    Text(
+                        text = when (analysisStep) {
+                            AnalysisStep.PREPARING -> "Preparing image..."
+                            AnalysisStep.DETECTING_TARGET -> "Detecting target..."
+                            AnalysisStep.DETECTING_ARROWS -> "Detecting arrows..."
+                            AnalysisStep.CALCULATING_SCORES -> "Calculating scores..."
+                            else -> "Processing..."
+                        },
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = progressDetail,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         } else {
@@ -216,6 +343,16 @@ fun ReviewScreen(
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
+
+                // Timing info (for debugging)
+                if (timingInfo.isNotEmpty()) {
+                    Text(
+                        text = timingInfo,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                }
 
                 // Error message
                 errorMessage?.let { msg ->

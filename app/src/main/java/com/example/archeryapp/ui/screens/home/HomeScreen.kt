@@ -10,10 +10,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -22,7 +23,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -36,8 +36,8 @@ import java.time.format.DateTimeFormatter
 
 @Composable
 fun HomeScreen(
-    onScanTarget: () -> Unit,
-    onUploadImage: () -> Unit,
+    onTakePicture: () -> Unit,
+    onInputScore: () -> Unit,
     onManageSessions: () -> Unit = {},
     viewModel: HomeViewModel = viewModel()
 ) {
@@ -64,7 +64,7 @@ fun HomeScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Auto-detect arrow scores from your target",
+                text = "Track your archery scores",
                 style = MaterialTheme.typography.bodyLarge,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -80,43 +80,54 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.weight(1f))
 
-            // Main action buttons
-            Button(
-                onClick = onScanTarget,
-                modifier = Modifier
-                    .fillMaxWidth(0.7f)
-                    .height(56.dp)
+            // Main action buttons - side by side
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Default.CameraAlt,
-                    contentDescription = null,
-                    modifier = Modifier.size(24.dp)
-                )
-                Spacer(modifier = Modifier.size(8.dp))
-                Text(
-                    text = "Scan Target",
-                    style = MaterialTheme.typography.titleMedium
-                )
-            }
+                Button(
+                    onClick = onTakePicture,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(72.dp)
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CameraAlt,
+                            contentDescription = null,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Take Picture",
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                    }
+                }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            OutlinedButton(
-                onClick = onUploadImage,
-                modifier = Modifier
-                    .fillMaxWidth(0.7f)
-                    .height(56.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.PhotoLibrary,
-                    contentDescription = null,
-                    modifier = Modifier.size(24.dp)
-                )
-                Spacer(modifier = Modifier.size(8.dp))
-                Text(
-                    text = "Upload Image",
-                    style = MaterialTheme.typography.titleMedium
-                )
+                OutlinedButton(
+                    onClick = onInputScore,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(72.dp)
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = null,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Input Score",
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(48.dp))
@@ -197,3 +208,4 @@ private fun ActiveSessionCard(
         }
     }
 }
+

@@ -38,4 +38,26 @@ interface ArrowScoreDao {
 
     @Query("SELECT COUNT(*) FROM arrow_scores WHERE endId IN (SELECT id FROM ends WHERE sessionId = :sessionId) AND isX = 1")
     suspend fun getXCountForSession(sessionId: Long): Int
+
+    // Statistics queries
+    @Query("SELECT COUNT(*) FROM arrow_scores")
+    suspend fun getTotalArrowCount(): Int
+
+    @Query("SELECT SUM(score) FROM arrow_scores")
+    suspend fun getTotalScore(): Int?
+
+    @Query("SELECT COUNT(*) FROM arrow_scores WHERE isX = 1")
+    suspend fun getTotalXCount(): Int
+
+    @Query("SELECT COUNT(*) FROM arrow_scores WHERE score = 10")
+    suspend fun getTotal10Count(): Int
+
+    @Query("SELECT AVG(CAST(score AS FLOAT)) FROM arrow_scores")
+    suspend fun getOverallAverageScore(): Float?
+
+    @Query("SELECT COUNT(*) FROM arrow_scores WHERE endId IN (SELECT id FROM ends WHERE sessionId = :sessionId)")
+    suspend fun getArrowCountForSession(sessionId: Long): Int
+
+    @Query("DELETE FROM arrow_scores")
+    suspend fun deleteAll()
 }

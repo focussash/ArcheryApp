@@ -33,4 +33,11 @@ interface EndDao {
 
     @Query("SELECT MAX(endNumber) FROM ends WHERE sessionId = :sessionId")
     suspend fun getMaxEndNumber(sessionId: Long): Int?
+
+    // Statistics queries
+    @Query("SELECT COUNT(*) FROM ends")
+    suspend fun getTotalEndCount(): Int
+
+    @Query("DELETE FROM ends")
+    suspend fun deleteAll()
 }

@@ -2,6 +2,7 @@ package com.example.archeryapp.ui.navigation
 
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
+import android.graphics.PointF
 import android.os.Build
 import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -27,14 +28,20 @@ import com.example.archeryapp.data.model.ScoringResult
 import com.example.archeryapp.data.model.TargetDetection
 import com.example.archeryapp.ui.components.BottomNavBar
 import com.example.archeryapp.ui.screens.arrowedit.ArrowEditScreen
+import com.example.archeryapp.ui.screens.calendar.CalendarScreen
+import com.example.archeryapp.ui.screens.calendar.DayDetailScreen
 import com.example.archeryapp.ui.screens.camera.CameraScreen
 import com.example.archeryapp.ui.screens.history.HistoryScreen
 import com.example.archeryapp.ui.screens.home.HomeScreen
 import com.example.archeryapp.ui.screens.home.HomeViewModel
 import com.example.archeryapp.ui.screens.results.ResultsScreen
 import com.example.archeryapp.ui.screens.review.ReviewScreen
+import com.example.archeryapp.ui.screens.scoreinput.NumericScoreInputScreen
+import com.example.archeryapp.ui.screens.scoreinput.ScoreInputMethodScreen
 import com.example.archeryapp.ui.screens.session.SessionSelectScreen
 import com.example.archeryapp.ui.screens.settings.SettingsScreen
+import com.example.archeryapp.ui.screens.statistics.StatisticsScreen
+import java.time.LocalDate
 
 sealed class Screen(val route: String) {
     object Home : Screen("home")
@@ -45,12 +52,20 @@ sealed class Screen(val route: String) {
     object Review : Screen("review")
     object ArrowEdit : Screen("arrow_edit")
     object Results : Screen("results")
+    object Statistics : Screen("statistics")
+    object Calendar : Screen("calendar")
+    object DayDetail : Screen("day_detail/{date}") {
+        fun createRoute(date: LocalDate) = "day_detail/${date}"
+    }
+    object ScoreInputMethod : Screen("score_input_method")
+    object NumericScoreInput : Screen("numeric_score_input")
 }
 
 // Screens that show the bottom navigation bar
 private val bottomNavScreens = setOf(
     Screen.Home.route,
     Screen.History.route,
+    Screen.Statistics.route,
     Screen.Settings.route
 )
 
@@ -64,6 +79,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
     // Shared ViewModel for home screen session state
     val homeViewModel: HomeViewModel = viewModel()
     val activeSessionId by homeViewModel.activeSessionId.collectAsState()
+    val homeUiState by homeViewModel.uiState.collectAsState()
 
     // Shared state for passing data between screens
     var capturedBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -71,7 +87,33 @@ fun AppNavigation(modifier: Modifier = Modifier) {
     var detectedTarget by remember { mutableStateOf<TargetDetection?>(null) }
     var detectedArrows by remember { mutableStateOf<List<ArrowDetection>>(emptyList()) }
 
-    // Photo picker launcher
+    // Helper function to create default target based on image dimensions
+    fun createDefaultTarget(bitmap: Bitmap): TargetDetection {
+        val centerX = bitmap.width / 2f
+        val centerY = bitmap.height / 2f
+        val radius = minOf(bitmap.width, bitmap.height) / 2f * 0.9f
+        return TargetDetection(
+            center = PointF(centerX, centerY),
+            radius = radius,
+            confidence = 1.0f
+        )
+    }
+
+    // Helper to navigate after camera capture - always go to auto-detect review
+    fun navigateAfterCapture(bitmap: Bitmap) {
+        capturedBitmap = bitmap
+        navController.navigate(Screen.Review.route)
+    }
+
+    // Helper to set up for manual arrow placement
+    fun setupManualArrowEdit(bitmap: Bitmap) {
+        capturedBitmap = bitmap
+        detectedTarget = createDefaultTarget(bitmap)
+        detectedArrows = emptyList()
+        navController.navigate(Screen.ArrowEdit.route)
+    }
+
+    // Photo picker launcher for calendar/day detail - uses auto-detect
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
@@ -88,8 +130,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                     @Suppress("DEPRECATION")
                     MediaStore.Images.Media.getBitmap(context.contentResolver, it)
                 }
-                capturedBitmap = bitmap
-                navController.navigate(Screen.Review.route)
+                navigateAfterCapture(bitmap)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -105,12 +146,10 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                         navController.navigate(route) {
                             // Pop up to home to avoid building up a large stack
                             popUpTo(Screen.Home.route) {
-                                saveState = true
+                                saveState = false
                             }
                             // Avoid multiple copies of the same destination
                             launchSingleTop = true
-                            // Restore state when reselecting a previously selected item
-                            restoreState = true
                         }
                     }
                 )
@@ -125,13 +164,11 @@ fun AppNavigation(modifier: Modifier = Modifier) {
         ) {
             composable(Screen.Home.route) {
                 HomeScreen(
-                    onScanTarget = {
+                    onTakePicture = {
                         navController.navigate(Screen.Camera.route)
                     },
-                    onUploadImage = {
-                        photoPickerLauncher.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                        )
+                    onInputScore = {
+                        navController.navigate(Screen.ScoreInputMethod.route)
                     },
                     onManageSessions = {
                         navController.navigate(Screen.SessionSelect.route)
@@ -141,11 +178,52 @@ fun AppNavigation(modifier: Modifier = Modifier) {
             }
 
             composable(Screen.History.route) {
-                HistoryScreen()
+                HistoryScreen(
+                    onNavigateToCalendar = {
+                        navController.navigate(Screen.Calendar.route)
+                    }
+                )
+            }
+
+            composable(Screen.Calendar.route) {
+                CalendarScreen(
+                    onDaySelected = { date ->
+                        navController.navigate(Screen.DayDetail.createRoute(date))
+                    },
+                    onNavigateBack = {
+                        navController.popBackStack()
+                    }
+                )
+            }
+
+            composable(Screen.DayDetail.route) { backStackEntry ->
+                val dateString = backStackEntry.arguments?.getString("date")
+                val date = dateString?.let { LocalDate.parse(it) } ?: LocalDate.now()
+                DayDetailScreen(
+                    date = date,
+                    onNavigateBack = {
+                        navController.popBackStack()
+                    },
+                    onAddScore = {
+                        // Navigate to score input method screen
+                        navController.navigate(Screen.ScoreInputMethod.route)
+                    }
+                )
             }
 
             composable(Screen.Settings.route) {
-                SettingsScreen()
+                SettingsScreen(
+                    onDataWiped = {
+                        homeViewModel.clearActiveSession()
+                        navController.navigate(Screen.Home.route) {
+                            popUpTo(Screen.Home.route) { inclusive = true }
+                        }
+                    }
+                )
+            }
+
+            composable(Screen.Statistics.route) {
+                StatisticsScreen()
             }
 
             composable(Screen.SessionSelect.route) {
@@ -167,8 +245,7 @@ fun AppNavigation(modifier: Modifier = Modifier) {
             composable(Screen.Camera.route) {
                 CameraScreen(
                     onImageCaptured = { bitmap ->
-                        capturedBitmap = bitmap
-                        navController.navigate(Screen.Review.route)
+                        navigateAfterCapture(bitmap)
                     },
                     onNavigateBack = {
                         navController.popBackStack()
@@ -206,11 +283,13 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                         onConfirm = { result ->
                             scoringResult = result
                             navController.navigate(Screen.Results.route) {
-                                popUpTo(Screen.Review.route) { inclusive = true }
+                                // Pop back to home whether coming from Review or direct entry
+                                popUpTo(Screen.Home.route) { inclusive = false }
                             }
                         },
                         onCancel = {
-                            navController.popBackStack()
+                            // Navigate back to home, clearing any intermediate screens
+                            navController.popBackStack(Screen.Home.route, inclusive = false)
                         },
                         capturedImage = bitmap
                     )
@@ -230,6 +309,36 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                         initialSessionId = activeSessionId
                     )
                 }
+            }
+
+            composable(Screen.ScoreInputMethod.route) {
+                ScoreInputMethodScreen(
+                    onPlaceOnTarget = {
+                        // Create a dummy bitmap for manual placement
+                        val dummyBitmap = Bitmap.createBitmap(1000, 1000, Bitmap.Config.ARGB_8888)
+                        setupManualArrowEdit(dummyBitmap)
+                    },
+                    onEnterNumbers = {
+                        navController.navigate(Screen.NumericScoreInput.route)
+                    },
+                    onNavigateBack = {
+                        navController.popBackStack()
+                    }
+                )
+            }
+
+            composable(Screen.NumericScoreInput.route) {
+                NumericScoreInputScreen(
+                    onConfirm = { result ->
+                        scoringResult = result
+                        navController.navigate(Screen.Results.route) {
+                            popUpTo(Screen.Home.route) { inclusive = false }
+                        }
+                    },
+                    onCancel = {
+                        navController.popBackStack(Screen.Home.route, inclusive = false)
+                    }
+                )
             }
         }
     }

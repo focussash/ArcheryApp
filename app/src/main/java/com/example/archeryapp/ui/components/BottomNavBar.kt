@@ -1,6 +1,7 @@
 package com.example.archeryapp.ui.components
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
@@ -19,6 +20,7 @@ sealed class BottomNavItem(
 ) {
     object Score : BottomNavItem("home", Icons.Default.Home, "Score")
     object History : BottomNavItem("history", Icons.Default.History, "History")
+    object Statistics : BottomNavItem("statistics", Icons.Default.BarChart, "Stats")
     object Settings : BottomNavItem("settings", Icons.Default.Settings, "Settings")
 }
 
@@ -30,6 +32,7 @@ fun BottomNavBar(
     val items = listOf(
         BottomNavItem.Score,
         BottomNavItem.History,
+        BottomNavItem.Statistics,
         BottomNavItem.Settings
     )
 

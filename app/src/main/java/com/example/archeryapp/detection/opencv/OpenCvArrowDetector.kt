@@ -56,26 +56,35 @@ class OpenCvArrowDetector : ArrowDetector {
     }
 
     private fun detectArrows(bitmap: Bitmap, target: TargetDetection): List<ArrowDetection> {
+        val totalStart = System.currentTimeMillis()
+
         val mat = Mat()
         Utils.bitmapToMat(bitmap, mat)
+        Log.d(TAG, "[TIMING] bitmapToMat: ${System.currentTimeMillis() - totalStart}ms")
 
         // Convert to grayscale
+        var stepStart = System.currentTimeMillis()
         val gray = Mat()
         Imgproc.cvtColor(mat, gray, Imgproc.COLOR_RGBA2GRAY)
+        Log.d(TAG, "[TIMING] cvtColor grayscale: ${System.currentTimeMillis() - stepStart}ms")
 
         // Apply CLAHE for better contrast (matches target detector)
+        stepStart = System.currentTimeMillis()
         val clahe = Imgproc.createCLAHE(2.0, Size(8.0, 8.0))
         clahe.apply(gray, gray)
+        Log.d(TAG, "[TIMING] CLAHE: ${System.currentTimeMillis() - stepStart}ms")
 
         // Apply Gaussian blur to reduce noise
+        stepStart = System.currentTimeMillis()
         Imgproc.GaussianBlur(gray, gray, Size(5.0, 5.0), 1.5)
+        Log.d(TAG, "[TIMING] GaussianBlur: ${System.currentTimeMillis() - stepStart}ms")
 
         // Calculate dynamic parameters based on target size
         val targetRadius = target.radius.toDouble()
         val minLineLength = (targetRadius * MIN_LINE_LENGTH_FACTOR).coerceAtLeast(30.0)
         val groupDistance = (targetRadius * ARROW_GROUP_DISTANCE_FACTOR).coerceAtLeast(25.0)
 
-        Log.d(TAG, "Target radius: $targetRadius, minLineLength: $minLineLength, groupDistance: $groupDistance")
+        Log.d(TAG, "[INFO] Target radius: $targetRadius, minLineLength: $minLineLength, groupDistance: $groupDistance")
 
         // Try multiple Canny threshold combinations to catch arrows in different lighting
         val allLines = mutableListOf<DoubleArray>()
@@ -85,10 +94,15 @@ class OpenCvArrowDetector : ArrowDetector {
             Pair(30.0, 100.0)    // Very low for dark arrows on dark backgrounds
         )
 
-        for ((low, high) in cannyParams) {
+        for ((sweepIndex, cannyParam) in cannyParams.withIndex()) {
+            val (low, high) = cannyParam
+            stepStart = System.currentTimeMillis()
+
             val edges = Mat()
             Imgproc.Canny(gray, edges, low, high)
+            val cannyTime = System.currentTimeMillis() - stepStart
 
+            stepStart = System.currentTimeMillis()
             val lines = Mat()
             Imgproc.HoughLinesP(
                 edges,
@@ -99,6 +113,9 @@ class OpenCvArrowDetector : ArrowDetector {
                 minLineLength,          // minLineLength - now dynamic
                 MAX_LINE_GAP            // maxLineGap
             )
+            val houghTime = System.currentTimeMillis() - stepStart
+
+            Log.d(TAG, "[TIMING] Canny+Hough sweep ${sweepIndex + 1}/3 (low=$low, high=$high): Canny=${cannyTime}ms, Hough=${houghTime}ms, lines=${lines.rows()}")
 
             for (i in 0 until lines.rows()) {
                 val line = lines.get(i, 0)
@@ -111,6 +128,7 @@ class OpenCvArrowDetector : ArrowDetector {
             lines.release()
         }
 
+        Log.d(TAG, "[TIMING] All Canny+Hough sweeps complete: ${System.currentTimeMillis() - totalStart}ms total")
         Log.d(TAG, "Found ${allLines.size} lines across all Canny thresholds")
 
         val targetCenter = Point(target.center.x.toDouble(), target.center.y.toDouble())

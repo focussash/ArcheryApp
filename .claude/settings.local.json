@@ -8,7 +8,9 @@
       "Bash(gradlew.bat build:*)",
       "Bash(./gradlew build:*)",
       "Bash(./gradlew compileDebugKotlin:*)",
-      "Bash(./gradlew:*)"
+      "Bash(./gradlew:*)",
+      "Bash(adb logcat:*)",
+      "Bash(xargs:*)"
     ]
   }
 }
