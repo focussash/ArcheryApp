@@ -26,7 +26,10 @@ data class ResultsUiState(
     val saveError: String? = null,
     val currentSessionId: Long? = null,
     val endCount: Int = 0,
-    val savedEnds: List<SavedEndSummary> = emptyList()
+    val savedEnds: List<SavedEndSummary> = emptyList(),
+    val endSaved: Boolean = false,
+    val savedEndId: Long? = null,
+    val navigateToEdit: Boolean = false
 )
 
 class ResultsViewModel(application: Application) : AndroidViewModel(application) {
@@ -77,7 +80,7 @@ class ResultsViewModel(application: Application) : AndroidViewModel(application)
             )
 
             result.fold(
-                onSuccess = { (sessionId, _) ->
+                onSuccess = { (sessionId, endId) ->
                     val ends = scoreRepository.getEndsForSessionSync(sessionId)
                     val savedEnds = ends.map { end ->
                         SavedEndSummary(
@@ -92,7 +95,9 @@ class ResultsViewModel(application: Application) : AndroidViewModel(application)
                         saveSuccess = true,
                         currentSessionId = sessionId,
                         endCount = ends.size,
-                        savedEnds = savedEnds
+                        savedEnds = savedEnds,
+                        endSaved = true,
+                        savedEndId = endId
                     )
                 },
                 onFailure = { error ->
@@ -103,6 +108,36 @@ class ResultsViewModel(application: Application) : AndroidViewModel(application)
                 }
             )
         }
+    }
+
+    fun deleteEndForEdit() {
+        viewModelScope.launch {
+            val endId = _uiState.value.savedEndId ?: return@launch
+            _uiState.value = _uiState.value.copy(isSaving = true, saveError = null)
+
+            try {
+                val existingEnd = scoreRepository.getEndById(endId)
+                if (existingEnd != null) {
+                    scoreRepository.deleteEnd(existingEnd)
+                }
+                // Reset state and trigger navigation
+                _uiState.value = _uiState.value.copy(
+                    isSaving = false,
+                    endSaved = false,
+                    savedEndId = null,
+                    navigateToEdit = true
+                )
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    isSaving = false,
+                    saveError = e.message ?: "Failed to delete end for edit"
+                )
+            }
+        }
+    }
+
+    fun clearNavigateToEdit() {
+        _uiState.value = _uiState.value.copy(navigateToEdit = false)
     }
 
     fun resetSaveState() {

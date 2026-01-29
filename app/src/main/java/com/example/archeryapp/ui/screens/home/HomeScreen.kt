@@ -173,6 +173,13 @@ private fun ActiveSessionCard(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
+                    if (uiState.totalSessionsToday > 1) {
+                        Text(
+                            text = "Session ${uiState.sessionNumberToday} of ${uiState.totalSessionsToday} today",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
                     if (uiState.activeSession.distance != null || uiState.activeSession.bowType != null) {
                         Text(
                             text = listOfNotNull(

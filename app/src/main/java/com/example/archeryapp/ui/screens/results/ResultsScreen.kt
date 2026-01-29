@@ -18,6 +18,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -57,6 +59,7 @@ import kotlin.math.sin
 fun ResultsScreen(
     scoringResult: ScoringResult,
     onNewScan: () -> Unit,
+    onEditEnd: () -> Unit,
     initialSessionId: Long? = null,
     viewModel: ResultsViewModel = viewModel()
 ) {
@@ -72,6 +75,14 @@ fun ResultsScreen(
         if (uiState.saveSuccess) {
             delay(2000)
             viewModel.resetSaveState()
+        }
+    }
+
+    // Handle navigation to edit
+    LaunchedEffect(uiState.navigateToEdit) {
+        if (uiState.navigateToEdit) {
+            onEditEnd()
+            viewModel.clearNavigateToEdit()
         }
     }
     Surface(
@@ -375,9 +386,15 @@ fun ResultsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Save button
+                // Save / Edit button
                 Button(
-                    onClick = { viewModel.saveScore(scoringResult) },
+                    onClick = {
+                        if (uiState.endSaved) {
+                            viewModel.deleteEndForEdit()
+                        } else {
+                            viewModel.saveScore(scoringResult)
+                        }
+                    },
                     enabled = !uiState.isSaving,
                     modifier = Modifier
                         .weight(1f)
@@ -394,26 +411,33 @@ fun ResultsScreen(
                         )
                     } else {
                         Icon(
-                            Icons.Default.Save,
+                            if (uiState.endSaved) Icons.Default.Edit else Icons.Default.Save,
                             contentDescription = null,
                             modifier = Modifier.padding(end = 8.dp)
                         )
                         Text(
-                            text = if (uiState.currentSessionId != null) "Save End" else "Save",
+                            text = if (uiState.endSaved) "Edit End" else "Save End",
                             style = MaterialTheme.typography.titleMedium
                         )
                     }
                 }
 
-                // New scan button
+                // Discard / Back to Home button
                 OutlinedButton(
                     onClick = onNewScan,
                     modifier = Modifier
                         .weight(1f)
                         .height(56.dp)
                 ) {
+                    if (uiState.endSaved) {
+                        Icon(
+                            Icons.Default.Home,
+                            contentDescription = null,
+                            modifier = Modifier.padding(end = 8.dp)
+                        )
+                    }
                     Text(
-                        text = "New Scan",
+                        text = if (uiState.endSaved) "Back to Home" else "Discard End",
                         style = MaterialTheme.typography.titleMedium
                     )
                 }

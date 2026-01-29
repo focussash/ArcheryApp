@@ -306,6 +306,15 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                             homeViewModel.refresh()
                             navController.popBackStack(Screen.Home.route, inclusive = false)
                         },
+                        onEditEnd = {
+                            // Clear shared state for fresh entry
+                            scoringResult = null
+                            capturedBitmap = null
+                            // Navigate to ScoreInputMethod, keeping Home in the stack
+                            navController.navigate(Screen.ScoreInputMethod.route) {
+                                popUpTo(Screen.Home.route) { inclusive = false }
+                            }
+                        },
                         initialSessionId = activeSessionId
                     )
                 }

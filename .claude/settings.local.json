@@ -10,7 +10,8 @@
       "Bash(./gradlew compileDebugKotlin:*)",
       "Bash(./gradlew:*)",
       "Bash(adb logcat:*)",
-      "Bash(xargs:*)"
+      "Bash(xargs:*)",
+      "Bash(.gradlew assembleDebug:*)"
     ]
   }
 }

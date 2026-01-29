@@ -15,7 +15,9 @@ import java.time.LocalDate
 data class HomeUiState(
     val activeSession: Session? = null,
     val hasActiveSession: Boolean = false,
-    val isLoading: Boolean = true
+    val isLoading: Boolean = true,
+    val sessionNumberToday: Int = 0,
+    val totalSessionsToday: Int = 0
 )
 
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
@@ -44,10 +46,18 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             val todaySessions = sessionRepository.getSessionsByDateRange(todayStart, todayEnd)
             val mostRecent = todaySessions.maxByOrNull { it.date }
 
+            val totalSessionsToday = todaySessions.size
+            val sessionNumberToday = if (mostRecent != null) {
+                val sorted = todaySessions.sortedBy { it.date }
+                sorted.indexOfFirst { it.id == mostRecent.id } + 1
+            } else 0
+
             _uiState.value = _uiState.value.copy(
                 activeSession = mostRecent,
                 hasActiveSession = mostRecent != null,
-                isLoading = false
+                isLoading = false,
+                sessionNumberToday = sessionNumberToday,
+                totalSessionsToday = totalSessionsToday
             )
             _activeSessionId.value = mostRecent?.id
         }
@@ -57,15 +67,29 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             if (sessionId != null) {
                 val session = sessionRepository.getSessionById(sessionId)
+
+                val todayStart = LocalDate.now().atStartOfDay()
+                val todayEnd = todayStart.plusDays(1)
+                val todaySessions = sessionRepository.getSessionsByDateRange(todayStart, todayEnd)
+                val totalSessionsToday = todaySessions.size
+                val sessionNumberToday = if (session != null) {
+                    val sorted = todaySessions.sortedBy { it.date }
+                    sorted.indexOfFirst { it.id == session.id } + 1
+                } else 0
+
                 _uiState.value = _uiState.value.copy(
                     activeSession = session,
-                    hasActiveSession = session != null
+                    hasActiveSession = session != null,
+                    sessionNumberToday = sessionNumberToday,
+                    totalSessionsToday = totalSessionsToday
                 )
                 _activeSessionId.value = sessionId
             } else {
                 _uiState.value = _uiState.value.copy(
                     activeSession = null,
-                    hasActiveSession = false
+                    hasActiveSession = false,
+                    sessionNumberToday = 0,
+                    totalSessionsToday = 0
                 )
                 _activeSessionId.value = null
             }

@@ -742,3 +742,57 @@ app/src/main/java/com/example/archeryapp/
 **Build Status:** Successful (`./gradlew assembleDebug` - 38 tasks)
 
 **Phase 2 Bug Fixes Complete:** All bug fixes and UI improvements implemented.
+
+### 2026-01-28 - Session Number Display on HomeScreen [COMPLETE]
+**Problem:** When user has multiple sessions on the same day, there was no indication of which session number they're on.
+
+**Solution:**
+- Added `sessionNumberToday` and `totalSessionsToday` to `HomeUiState`
+- HomeViewModel calculates session position among today's sessions
+- HomeScreen displays "Session X of Y today" when there are multiple sessions
+
+**Files modified:**
+- `ui/screens/home/HomeViewModel.kt` - Added session counting logic in `loadTodaySession()` and `setActiveSession()`
+- `ui/screens/home/HomeScreen.kt` - Added conditional text display in `ActiveSessionCard`
+
+### 2026-01-28 - ResultsScreen Button State Changes [COMPLETE]
+**Problem:** After saving an end, the buttons still showed "Save End" and "Discard End" which was confusing.
+
+**Solution:**
+- Added `endSaved: Boolean` and `savedEndId: Long?` to `ResultsUiState`
+- After successful save, set `endSaved = true` and capture `savedEndId`
+- Button text/icons change based on `endSaved` state:
+  - Before save: "Save End" (save icon) / "Discard End"
+  - After save: "Edit End" (edit icon) / "Back to Home" (home icon)
+
+**Files modified:**
+- `ui/screens/results/ResultsViewModel.kt` - Added `endSaved`, `savedEndId` state tracking
+- `ui/screens/results/ResultsScreen.kt` - Dynamic button text/icons, added Edit and Home icon imports
+
+### 2026-01-28 - Fix "Edit End" Navigation [COMPLETE]
+**Problem:** "Edit End" button silently deleted and re-saved the same data instead of navigating back to ScoreInputMethod screen for re-entry.
+
+**Solution:**
+- Changed `editEnd()` to `deleteEndForEdit()` which deletes the saved end and triggers navigation
+- Added `navigateToEdit` flag to UI state for navigation coordination
+- Added `onEditEnd` callback to ResultsScreen for navigation handling
+
+**Flow after fix:**
+1. User saves an end → buttons become "Edit End" / "Back to Home"
+2. User taps "Edit End" → ViewModel deletes the saved end from DB → navigates to ScoreInputMethod
+3. User picks input method → enters new scores → arrives at fresh ResultsScreen
+4. Fresh ResultsScreen shows "Save End" / "Discard End" as normal
+
+**Files modified:**
+- `ui/screens/results/ResultsViewModel.kt`
+  - Added `navigateToEdit: Boolean = false` to `ResultsUiState`
+  - Replaced `editEnd(scoringResult)` with `deleteEndForEdit()` - deletes end, sets `navigateToEdit = true`
+  - Added `clearNavigateToEdit()` to reset the navigation flag
+- `ui/screens/results/ResultsScreen.kt`
+  - Added `onEditEnd: () -> Unit` parameter
+  - Added `LaunchedEffect(uiState.navigateToEdit)` to trigger navigation callback
+  - Changed "Edit End" button onClick from `viewModel.editEnd(scoringResult)` to `viewModel.deleteEndForEdit()`
+- `ui/navigation/AppNavigation.kt`
+  - Added `onEditEnd` callback to ResultsScreen that clears shared state and navigates to ScoreInputMethod
+
+**Build Status:** Successful (`./gradlew assembleDebug` - 38 tasks)
