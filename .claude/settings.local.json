@@ -11,7 +11,10 @@
       "Bash(./gradlew:*)",
       "Bash(adb logcat:*)",
       "Bash(xargs:*)",
-      "Bash(.gradlew assembleDebug:*)"
+      "Bash(.gradlew assembleDebug:*)",
+      "Bash(python memory-claude/_split_architecture.py)",
+      "Bash(python -c ':*)",
+      "Bash"
     ]
   }
 }
