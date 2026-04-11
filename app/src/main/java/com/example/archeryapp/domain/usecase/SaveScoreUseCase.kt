@@ -5,6 +5,7 @@ import com.example.archeryapp.domain.model.Arrow
 import com.example.archeryapp.domain.model.End
 import com.example.archeryapp.domain.model.Position
 import com.example.archeryapp.domain.model.Session
+import com.example.archeryapp.domain.model.TargetType
 import com.example.archeryapp.domain.repository.ScoreRepository
 import com.example.archeryapp.domain.repository.SessionRepository
 import java.time.LocalDateTime
@@ -24,16 +25,19 @@ class SaveScoreUseCase(
         sessionDistance: String? = null,
         sessionBowType: String? = null,
         sessionLocation: String? = null,
+        sessionTargetType: TargetType = TargetType.MINI_MC,
         endNotes: String? = null
     ): Result<Pair<Long, Long>> {
         return try {
-            // Get or create session
+            // Get or create session. When continuing an existing session we never
+            // override its stored targetType — that's locked at creation per spec.
             val actualSessionId = sessionId ?: run {
                 val newSession = Session(
                     date = LocalDateTime.now(),
                     distance = sessionDistance,
                     bowType = sessionBowType,
-                    location = sessionLocation
+                    location = sessionLocation,
+                    targetType = sessionTargetType
                 )
                 sessionRepository.createSession(newSession)
             }

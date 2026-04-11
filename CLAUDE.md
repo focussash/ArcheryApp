@@ -14,7 +14,7 @@ These instructions govern ALL work in this repository. They OVERRIDE default beh
 - **Build System:** Gradle (Kotlin DSL) — primary command: `./gradlew assembleDebug`
 - **Target Platform:** Android
 - **Persistence:** Room (2.6.1) with KSP annotation processing
-- **Key libraries:** OpenCV (target/arrow detection), kizitonwose Calendar 2.5.0, Vico charts 1.13.1, kotlinx.serialization 1.6.3
+- **Key libraries:** OpenCV (target/arrow detection), kizitonwose Calendar 2.6.2, Vico charts 1.13.1, kotlinx.serialization 1.6.3
 - **Planned (later phases):** Nordic Android BLE (Phase 3 — M5Stick integration), ML Kit Pose Detection (Phase 4 — form analysis)
 
 ## Architecture Principles

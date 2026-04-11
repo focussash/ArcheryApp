@@ -33,7 +33,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -77,6 +79,7 @@ fun CalendarScreen(
         firstVisibleMonth = currentMonth,
         firstDayOfWeek = firstDayOfWeek
     )
+    val coroutineScope = rememberCoroutineScope()
 
     Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(
@@ -99,7 +102,9 @@ fun CalendarScreen(
             IconButton(onClick = {
                 val newMonth = calendarState.firstVisibleMonth.yearMonth.minusMonths(1)
                 if (newMonth >= startMonth) {
-                    // Navigation handled by scroll
+                    coroutineScope.launch {
+                        calendarState.animateScrollToMonth(newMonth)
+                    }
                 }
             }) {
                 Icon(Icons.Default.ChevronLeft, "Previous month")
@@ -116,7 +121,9 @@ fun CalendarScreen(
             IconButton(onClick = {
                 val newMonth = calendarState.firstVisibleMonth.yearMonth.plusMonths(1)
                 if (newMonth <= endMonth) {
-                    // Navigation handled by scroll
+                    coroutineScope.launch {
+                        calendarState.animateScrollToMonth(newMonth)
+                    }
                 }
             }) {
                 Icon(Icons.Default.ChevronRight, "Next month")

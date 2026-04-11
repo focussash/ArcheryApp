@@ -4,9 +4,11 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.archeryapp.ArcheryApplication
+import com.example.archeryapp.data.preferences.UserPreferences
 import com.example.archeryapp.data.repository.ScoreRepositoryImpl
 import com.example.archeryapp.data.repository.SessionRepositoryImpl
 import com.example.archeryapp.domain.model.Session
+import com.example.archeryapp.domain.model.TargetType
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,6 +37,7 @@ class SessionSelectViewModel(application: Application) : AndroidViewModel(applic
     private val database = (application as ArcheryApplication).database
     private val sessionRepository = SessionRepositoryImpl(database.sessionDao())
     private val scoreRepository = ScoreRepositoryImpl(database.endDao(), database.arrowScoreDao())
+    private val userPreferences = UserPreferences(application)
 
     private val _uiState = MutableStateFlow(SessionSelectUiState())
     val uiState: StateFlow<SessionSelectUiState> = _uiState.asStateFlow()
@@ -79,7 +82,10 @@ class SessionSelectViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
+    fun getLastTargetType(): TargetType = userPreferences.getLastTargetType()
+
     fun createNewSession(
+        targetType: TargetType,
         distance: String? = null,
         bowType: String? = null,
         location: String? = null,
@@ -93,9 +99,11 @@ class SessionSelectViewModel(application: Application) : AndroidViewModel(applic
                     date = LocalDateTime.now(),
                     distance = distance,
                     bowType = bowType,
-                    location = location
+                    location = location,
+                    targetType = targetType
                 )
                 val sessionId = sessionRepository.createSession(session)
+                userPreferences.setLastTargetType(targetType)
                 _uiState.value = _uiState.value.copy(isCreating = false)
                 onCreated(sessionId)
             } catch (e: Exception) {

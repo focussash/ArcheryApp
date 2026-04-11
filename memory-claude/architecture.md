@@ -63,5 +63,6 @@ app/src/main/java/com/example/archeryapp/
 | 2026-01-26 | Nordic BLE library for Bluetooth | Well-maintained, handles Android BLE complexity |
 | 2026-01-26 | ML Kit for pose detection | On-device, no network required, Google-supported |
 | 2026-01-26 | Kizitonwose calendar library | Compose-native, flexible, well-documented |
+| 2026-04-10 | Upgrade kizitonwose calendar 2.5.0 → 2.6.2 | Runtime ClassNotFoundException on `SnapPositionInLayout` — 2.5.0 was compiled against Compose Foundation 1.5.x where the class lived; Compose BOM 2024.09.00 (Foundation 1.7.x) removed it. 2.6.2 is rebuilt against 1.7.x. APIs are source-compatible. |
 
 ---

@@ -303,7 +303,6 @@ fun AppNavigation(modifier: Modifier = Modifier) {
                         onNewScan = {
                             capturedBitmap = null
                             scoringResult = null
-                            homeViewModel.refresh()
                             navController.popBackStack(Screen.Home.route, inclusive = false)
                         },
                         onEditEnd = {

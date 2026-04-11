@@ -366,7 +366,7 @@ implementation "com.patrykandpatrick.vico:compose:1.13.1"
 implementation "com.patrykandpatrick.vico:compose-m3:1.13.1"
 
 // Calendar
-implementation "com.kizitonwose.calendar:compose:2.5.0"
+implementation "com.kizitonwose.calendar:compose:2.6.2"
 ```
 
 ---

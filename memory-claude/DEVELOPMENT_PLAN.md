@@ -662,6 +662,280 @@ data class Arrow(
 
 ---
 
+# Phase 2.4: Target Type Support
+
+Adds target-type awareness to sessions. Four types: standard multicolor (`MC`), standard blue face (`BF`), mini multicolor (`MINI_MC`), and triple (`TRIPLE`). Each session is locked to one target type at creation; changing type requires ending the current session and starting a new one. Statistics, history, and logging all segregate data by target type. Legacy sessions (created before this feature) are backfilled as `MINI_MC` per user decision.
+
+**Scoring rules:**
+- `MC`, `MINI_MC`, `TRIPLE`: standard USA Archery scoring — X, 10, 9, …, 1, M (all rings valid)
+- `BF`: only X, 10, 9, 8, 7, 6 are scorable; any hit in rings 1–5 counts as M (miss)
+
+**Auto-detection:** Only MC targets support the existing OpenCV auto-detect pipeline. For BF / MINI_MC / TRIPLE sessions the "Take Picture" button is disabled with a helper message; users must use "Input Score" instead. (Detection improvements for other target types are a separate, later concern.)
+
+---
+
+## 2.4.1 Target Type Domain + Scoring Strategies [Minor]
+**Task:** Create `TargetType` enum and `ScoringStrategy` interface with two implementations
+**Files:**
+- `app/src/main/java/com/example/archeryapp/domain/model/TargetType.kt` (new)
+- `app/src/main/java/com/example/archeryapp/domain/scoring/ScoringStrategy.kt` (new)
+- `app/src/main/java/com/example/archeryapp/domain/scoring/MultiColorScoringStrategy.kt` (new)
+- `app/src/main/java/com/example/archeryapp/domain/scoring/BlueFaceScoringStrategy.kt` (new)
+- `app/src/test/java/com/example/archeryapp/domain/scoring/ScoringStrategyTest.kt` (new)
+
+**Implementation:**
+- `TargetType` enum with 4 values: `MC`, `BF`, `MINI_MC`, `TRIPLE`, each carrying a `code: String` (persistence identifier) and `displayName: String` (UI label).
+- Companion `TargetType.fromCode(code: String?): TargetType` returns `MINI_MC` when the code is null or unknown (legacy backfill safety).
+- `ScoringStrategy` interface with:
+  - `fun normalize(rawRingScore: Int, isX: Boolean): Int` — returns the scored value (0 for miss).
+  - `fun isButtonVisible(ringValue: Int): Boolean` — for the numeric input UI to decide which buttons to show.
+- `MultiColorScoringStrategy`: all rings 1–10 valid, returns raw score unchanged. Used by `MC`, `MINI_MC`, `TRIPLE`.
+- `BlueFaceScoringStrategy`: rings 1–5 → 0 (miss). Rings 6–10 and X pass through unchanged.
+- `ScoringStrategy.forTarget(type: TargetType): ScoringStrategy` factory function.
+
+**Test:**
+- [ ] File compiles; `./gradlew assembleDebug` succeeds
+- [ ] Unit test: MC strategy returns 8 for raw 8, 0 for raw 0
+- [ ] Unit test: BF strategy returns 8 for raw 8, 0 for raw 5 (demoted), 0 for raw 0
+- [ ] Unit test: `TargetType.fromCode(null)` returns `MINI_MC`
+- [ ] `./gradlew test` passes all new tests
+
+---
+
+## 2.4.2 Database Migration v1 → v2 [Major — CRITICAL]
+**Task:** Add `targetType` column to `sessions` table with a safe, data-preserving migration
+**Files:**
+- `app/src/main/java/com/example/archeryapp/data/local/entity/SessionEntity.kt` (modify)
+- `app/src/main/java/com/example/archeryapp/data/local/database/Migrations.kt` (new)
+- `app/src/main/java/com/example/archeryapp/data/local/database/AppDatabase.kt` (modify: version bump + register migration)
+
+**Implementation:**
+- Add `val targetType: String? = null` to `SessionEntity` (nullable for migration compatibility).
+- New `Migrations.kt` file defining:
+  ```kotlin
+  val MIGRATION_1_2 = object : Migration(1, 2) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+          db.execSQL("ALTER TABLE sessions ADD COLUMN targetType TEXT DEFAULT NULL")
+          db.execSQL("UPDATE sessions SET targetType = 'MINI_MC' WHERE targetType IS NULL")
+      }
+  }
+  ```
+- `AppDatabase`: bump `version = 2`, add `.addMigrations(MIGRATION_1_2)` to the `databaseBuilder` call.
+- **DO NOT use `fallbackToDestructiveMigration()`** — legacy data MUST survive.
+- Enable Room schema export (`exportSchema = true` in `@Database`, `room.schemaLocation` in build.gradle) if not already enabled, so the schema JSON is version-controlled going forward.
+
+**Test:**
+- [ ] `./gradlew assembleDebug` builds
+- [ ] Room schema v2 JSON generated under `app/schemas/` (or equivalent if schema export is enabled)
+- [ ] **⛔ MANDATORY user verification on a REAL device:** install the debug APK on a device that already has the v1 DB with existing sessions; confirm (a) app opens without crash, (b) all prior sessions still appear in History/Calendar, (c) each prior session is labeled `MINI_MC` in the UI (after 2.4.10) or via Database Inspector (before 2.4.10).
+
+**⛔ HARD STOP:** Claude MUST NOT proceed to 2.4.3 until user has installed the build and explicitly confirmed legacy data survived the migration. Migration bugs cannot be recovered from.
+
+---
+
+## 2.4.3 Session Domain Propagation [Minor]
+**Task:** Plumb `targetType` through the `Session` domain model, `SessionRepository`, and `SaveScoreUseCase`
+**Files:**
+- `app/src/main/java/com/example/archeryapp/domain/model/Session.kt` (modify)
+- `app/src/main/java/com/example/archeryapp/domain/repository/SessionRepository.kt` (modify)
+- `app/src/main/java/com/example/archeryapp/data/repository/SessionRepositoryImpl.kt` (modify)
+- `app/src/main/java/com/example/archeryapp/domain/usecase/SaveScoreUseCase.kt` (modify)
+
+**Implementation:**
+- Add `val targetType: TargetType = TargetType.MINI_MC` to `Session` domain model (default = legacy-safe).
+- Entity↔Domain mapping in `SessionRepositoryImpl`: map `SessionEntity.targetType` (String?) ↔ `Session.targetType` (enum) using `TargetType.fromCode` and `type.code`.
+- Add `targetType: TargetType` parameter to session-creation methods on `SessionRepository` / `SessionRepositoryImpl`.
+- `SaveScoreUseCase`: when creating a new session, accept and propagate a `targetType`; when continuing an existing session, use that session's stored target type (do NOT allow override).
+
+**Test:**
+- [ ] Build succeeds
+- [ ] Round-trip: create session with `BF` → read back → assert targetType preserved
+- [ ] Legacy sessions (created pre-migration) deserialize as `MINI_MC`
+
+---
+
+## 2.4.4 Last-Used Target Type Preference [Minor]
+**Task:** Persist and retrieve the last-used target type so the session picker defaults sensibly
+**Files:**
+- `app/src/main/java/com/example/archeryapp/data/preferences/UserPreferences.kt` (new)
+
+**Implementation:**
+- SharedPreferences-backed singleton (injected or constructed with Context).
+- `fun getLastTargetType(): TargetType` — returns `TargetType.MINI_MC` when unset.
+- `fun setLastTargetType(type: TargetType)` — writes the enum's `code`.
+- Keep the class small and single-purpose; DataStore is overkill for one enum.
+
+**Test:**
+- [ ] Build succeeds
+- [ ] Set then get round-trips (unit test or manual inspection)
+
+---
+
+## 2.4.5 Target Type Picker Dialog [Minor]
+**Task:** Reusable Compose dialog for selecting a target type
+**Files:**
+- `app/src/main/java/com/example/archeryapp/ui/components/TargetTypePickerDialog.kt` (new)
+
+**Implementation:**
+- `@Composable fun TargetTypePickerDialog(current: TargetType, onSelect: (TargetType) -> Unit, onDismiss: () -> Unit)`
+- Material3 `AlertDialog` with a radio-button list of all `TargetType` values (shown by `displayName`).
+- Confirm button applies selection; Cancel dismisses without change.
+- Preview function for Android Studio tooling.
+
+**Test:**
+- [ ] Build succeeds
+- [ ] Preview renders
+
+---
+
+## 2.4.6 New Session Creation Flow [Major]
+**Task:** Integrate target-type picker into "+ New Session" on `SessionSelectScreen`
+**Files:**
+- `app/src/main/java/com/example/archeryapp/ui/screens/session/SessionSelectScreen.kt` (modify)
+- `app/src/main/java/com/example/archeryapp/ui/screens/session/SessionSelectViewModel.kt` (modify)
+
+**Implementation:**
+- "+ New Session" FAB now opens `TargetTypePickerDialog`, initial selection = `UserPreferences.getLastTargetType()`.
+- On confirm: `SessionSelectViewModel.createNewSession(targetType)` → repository creates the session with the given type → `UserPreferences.setLastTargetType(type)` → navigate to the score-input/results flow with the new session id.
+- On cancel: dialog dismisses, no session created.
+
+**Test:**
+- [ ] Build succeeds
+- [ ] Manual: tap "+ New Session" → picker appears with last-used default → select `BF` → new session created with `BF` type
+
+---
+
+## 2.4.7 HomeScreen: Badge + End Session + Auto-Detect Gating + Create Session + Active Session Bugfix [Major]
+**Task:** Surface target type on the active session card, add "End Session" button, gate "Take Picture" to MC only, add a "Create Session" button on HomeScreen, and fix the stale-active-session bug when a session is deleted from elsewhere.
+**Files:**
+- `app/src/main/java/com/example/archeryapp/ui/screens/home/HomeScreen.kt` (modify)
+- `app/src/main/java/com/example/archeryapp/ui/screens/home/HomeViewModel.kt` (modify)
+
+**Implementation:**
+- Active session card shows a small target-type chip/badge (uses `displayName`).
+- Add "End Session" button — on click: clears the active session in UI state (does NOT delete the session row in the database; it just unsets the "currently active" flag so the next session start triggers a fresh target picker).
+- "Take Picture" button: disabled when `activeSession.targetType != MC`, with helper text "Auto-detect only supports standard multicolor targets. Use 'Input Score' instead."
+- "Input Score" button: unchanged, enabled for all target types.
+- `HomeViewModel.endActiveSession()` — clears `activeSessionId` and related state.
+- **[added]** `HomeViewModel.createSession(targetType, onCreated)` — creates a new `Session` with the given target type, persists last-used type via `UserPreferences`, and sets the new session as active. Uses the same strategy as `SessionSelectViewModel.createNewSession`.
+- **[added]** `HomeViewModel.getLastTargetType()` — delegates to `UserPreferences` for the picker dialog's initial selection.
+- **[added]** HomeScreen gains a "Create New Session" button (above the action-button row) that opens `TargetTypePickerDialog` and calls `HomeViewModel.createSession`. On success, the reactive state flow auto-promotes the new session to active.
+- **[added — bugfix]** `HomeViewModel.loadTodaysSession()` is replaced by reactive observation: `combine(sessionRepository.getAllSessions(), _activeSessionId)` runs for the ViewModel's lifetime. When a session is deleted from anywhere (SessionSelect, etc.), the flow re-emits and HomeScreen's active card self-heals — either falling back to the most recent remaining session for today or clearing entirely if none exist.
+  - Self-healing rule: if an explicit `_activeSessionId` no longer resolves to any row, clear it and re-pick most-recent-today (or null).
+  - `setActiveSession(id)` and `clearActiveSession()` become trivial: they just update `_activeSessionId`, and the combined flow recomputes everything.
+
+**Test:**
+- [ ] Build succeeds
+- [ ] Active session card shows badge for all four target types
+- [ ] Tapping "End Session" hides the active session card → shows "No Active Session"
+- [ ] "Take Picture" is disabled when target is `BF`, `MINI_MC`, or `TRIPLE`
+- [ ] "Take Picture" is enabled when target is `MC`
+- [ ] "Input Score" is enabled for all types
+- [ ] Tapping "Create New Session" on HomeScreen opens target picker → confirming creates a session that appears as active
+- [ ] Creating a session from HomeScreen, then deleting it from SessionSelect → HomeScreen auto-clears the active card (no stale state)
+- [ ] Creating two sessions from HomeScreen → session 2 becomes active → deleting session 2 → session 1 becomes the active card
+
+---
+
+## 2.4.8 Scoring Application (Results + Numeric Input) [Major]
+**Task:** Apply the per-target scoring strategy in Results and Numeric Input
+**Files:**
+- `app/src/main/java/com/example/archeryapp/ui/screens/results/ResultsViewModel.kt` (modify)
+- `app/src/main/java/com/example/archeryapp/ui/screens/results/ResultsScreen.kt` (modify if needed)
+- `app/src/main/java/com/example/archeryapp/ui/screens/scoreinput/NumericScoreInputScreen.kt` (modify)
+
+**Implementation:**
+- `ResultsViewModel` loads the session's `targetType` when resolving session id, resolves a `ScoringStrategy` via the factory, and applies `normalize()` to each arrow's raw ring value before display/persistence.
+- `NumericScoreInputScreen` reads target type (via nav argument or shared state) and uses `ScoringStrategy.isButtonVisible(ringValue)` to hide (or visually disable) buttons that are not scorable:
+  - `BF`: show X, 10, 9, 8, 7, 6, M only
+  - `MC` / `MINI_MC` / `TRIPLE`: show all 12 buttons
+- Arrow chips already populated always reflect the normalized score.
+
+**Test:**
+- [ ] Build succeeds
+- [ ] Start `BF` session, open numeric input: buttons 1–5 not shown
+- [ ] Start `MC` session, open numeric input: all buttons visible
+- [ ] Save end in `BF` session → results screen shows correct total (no 1–5 entries)
+
+---
+
+## 2.4.9 Statistics Per Target Type [Major]
+**Task:** Filter statistics by target type with a segmented selector
+**Files:**
+- `app/src/main/java/com/example/archeryapp/data/repository/StatisticsRepository.kt` (modify)
+- `app/src/main/java/com/example/archeryapp/data/local/dao/SessionDao.kt` (modify: add target-filtered queries)
+- `app/src/main/java/com/example/archeryapp/data/local/dao/EndDao.kt` (modify if needed)
+- `app/src/main/java/com/example/archeryapp/data/local/dao/ArrowScoreDao.kt` (modify if needed)
+- `app/src/main/java/com/example/archeryapp/ui/screens/statistics/StatisticsScreen.kt` (modify)
+- `app/src/main/java/com/example/archeryapp/ui/screens/statistics/StatisticsViewModel.kt` (modify)
+
+**Implementation:**
+- Repository methods gain `targetType: TargetType? = null` parameter; `null` = aggregate across all types.
+- DAO queries add a `WHERE targetType = :code` clause (or no clause when null); since Room doesn't support optional predicates natively, either (a) two variant queries, or (b) use `COALESCE` trick.
+- `StatisticsScreen` gains a segmented-button row at the top: `All | MC | BF | Mini MC | Triple`.
+- Selecting a segment triggers `StatisticsViewModel.setTargetFilter(type)` → re-queries and updates state.
+- All charts, cards, and aggregates reflect the filter.
+
+**Test:**
+- [ ] Build succeeds
+- [ ] Default view (`All`) matches current aggregate numbers for existing data
+- [ ] Selecting `MC` filters to MC sessions only
+- [ ] Selecting `Mini MC` shows legacy sessions (post-migration they are all `MINI_MC`)
+- [ ] Trend chart updates appropriately
+
+---
+
+## 2.4.10 Target Type Display in Session Lists [Minor]
+**Task:** Show target type chip on session cards in `SessionSelectScreen`, `HistoryScreen`, and `DayDetailScreen`
+**Files:**
+- `app/src/main/java/com/example/archeryapp/ui/screens/session/SessionSelectScreen.kt` (modify)
+- `app/src/main/java/com/example/archeryapp/ui/screens/history/HistoryScreen.kt` (modify)
+- `app/src/main/java/com/example/archeryapp/ui/screens/calendar/DayDetailScreen.kt` (modify)
+
+**Implementation:**
+- Small compact chip on each session row/card, next to the session number/date.
+- Optional: subtle color coding (gold for MC, blue for BF, etc.) — but keep the label visible regardless of color, for accessibility.
+- Single composable `TargetTypeChip(type: TargetType)` placed in `ui/components/` so all three screens share the same rendering.
+
+**Test:**
+- [ ] Build succeeds
+- [ ] All three screens show the chip on every session card
+
+---
+
+## 2.4.11 Export/Import Schema Update [Minor]
+**Task:** Include `targetType` in JSON export; on import, treat missing field as `MINI_MC`
+**Files:**
+- `app/src/main/java/com/example/archeryapp/data/export/DataExportService.kt` (modify)
+- `app/src/main/java/com/example/archeryapp/data/export/DataImportService.kt` (modify)
+
+**Implementation:**
+- Extend the serialized session DTO with a nullable `targetType: String?` field.
+- Export: write the session's `targetType.code`.
+- Import: read field; on null/missing, fall back to `TargetType.MINI_MC` (consistent with the legacy backfill rule in 2.4.2).
+- Backwards compatible: legacy JSON files (without `targetType`) import cleanly as `MINI_MC`.
+
+**Test:**
+- [ ] Build succeeds
+- [ ] Export → JSON contains `targetType` for every session
+- [ ] Import a hand-crafted legacy JSON (no `targetType` field) → sessions land as `MINI_MC`
+
+---
+
+## Phase 2.4 Execution Order & Stop Points
+
+Steps MUST be executed in numeric order. Dependencies: every step from 2.4.3 onward depends on 2.4.2's schema change being present.
+
+- **After 2.4.2:** ⛔ HARD STOP. Database migration cannot be validated by `./gradlew assembleDebug` alone. User MUST install the debug APK on a real device, verify all pre-existing sessions still appear, and explicitly confirm data survived before Claude proceeds to 2.4.3. Migration bugs on shipped schemas are unrecoverable.
+
+- **After 2.4.7:** Soft checkpoint. End-to-end manual sanity check recommended (create a `BF` session, confirm numeric input restrictions, verify home screen gating). Proceeding blind is acceptable if user authorizes.
+
+- **After 2.4.11:** Full feature complete. Regression testing of existing Phase 1 / Phase 2 features recommended before closing out Phase 2.4 and resuming Phase 3.
+
+---
+
+---
+
 # Phase 3: M5Stick Integration
 
 ## 3.1 Bluetooth Foundation

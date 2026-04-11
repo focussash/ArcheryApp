@@ -9,6 +9,7 @@ data class Session(
     val bowType: String? = null,
     val location: String? = null,
     val notes: String? = null,
+    val targetType: TargetType = TargetType.MINI_MC,
     val ends: List<End> = emptyList()
 ) {
     val totalScore: Int get() = ends.sumOf { it.totalScore }

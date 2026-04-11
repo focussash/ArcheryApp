@@ -18,11 +18,16 @@ lifecycleViewModelCompose = "2.7.0"
 # Room database
 room = "2.6.1"
 # Calendar view
-kizitonwoseCalendar = "2.5.0"
+# 2.5.0 was compiled against Compose Foundation 1.5.x (SnapPositionInLayout);
+# bumped to 2.6.2 for compatibility with Compose BOM 2024.09.00 (Foundation 1.7.x).
+kizitonwoseCalendar = "2.6.2"
 # Charts library
 vico = "1.13.1"
 # Serialization
 kotlinxSerialization = "1.6.3"
+# Nordic BLE (Phase 3 - M5Stick integration)
+nordicBle = "2.7.5"
+nordicScanner = "1.6.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -65,6 +70,10 @@ vico-compose-m3 = { group = "com.patrykandpatrick.vico", name = "compose-m3", ve
 vico-core = { group = "com.patrykandpatrick.vico", name = "core", version.ref = "vico" }
 # Serialization
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+# Nordic BLE (Phase 3 - M5Stick integration)
+nordic-ble = { group = "no.nordicsemi.android", name = "ble", version.ref = "nordicBle" }
+nordic-ble-ktx = { group = "no.nordicsemi.android", name = "ble-ktx", version.ref = "nordicBle" }
+nordic-scanner = { group = "no.nordicsemi.android.support.v18", name = "scanner", version.ref = "nordicScanner" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

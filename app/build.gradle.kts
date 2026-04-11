@@ -41,6 +41,11 @@ android {
     }
 }
 
+ksp {
+    // Room schema export — version-controlled so migrations can be reviewed/diffed.
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
 
     implementation(libs.androidx.core.ktx)
@@ -89,6 +94,11 @@ dependencies {
 
     // Serialization
     implementation(libs.kotlinx.serialization.json)
+
+    // Nordic BLE (Phase 3 - M5Stick integration)
+    implementation(libs.nordic.ble)
+    implementation(libs.nordic.ble.ktx)
+    implementation(libs.nordic.scanner)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

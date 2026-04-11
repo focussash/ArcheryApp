@@ -36,12 +36,17 @@ import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.archeryapp.domain.model.TargetType
+import com.example.archeryapp.ui.components.TargetTypePickerDialog
 import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -53,6 +58,9 @@ fun SessionSelectScreen(
     viewModel: SessionSelectViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    // Snapshot of last-used type, captured when the FAB is tapped so we read
+    // SharedPreferences once per dialog-open rather than on every recomposition.
+    var pickerInitialType by remember { mutableStateOf<TargetType?>(null) }
 
     Scaffold(
         topBar = {
@@ -71,8 +79,8 @@ fun SessionSelectScreen(
         floatingActionButton = {
             FloatingActionButton(
                 onClick = {
-                    viewModel.createNewSession { sessionId ->
-                        onNewSession(sessionId)
+                    if (!uiState.isCreating) {
+                        pickerInitialType = viewModel.getLastTargetType()
                     }
                 }
             ) {
@@ -142,6 +150,19 @@ fun SessionSelectScreen(
                 }
             }
         }
+    }
+
+    pickerInitialType?.let { initial ->
+        TargetTypePickerDialog(
+            current = initial,
+            onSelect = { chosenType ->
+                pickerInitialType = null
+                viewModel.createNewSession(targetType = chosenType) { sessionId ->
+                    onNewSession(sessionId)
+                }
+            },
+            onDismiss = { pickerInitialType = null }
+        )
     }
 }
 

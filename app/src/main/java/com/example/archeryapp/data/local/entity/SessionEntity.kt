@@ -10,5 +10,6 @@ data class SessionEntity(
     val distance: String?,  // e.g., "18m", "70m"
     val bowType: String?,  // e.g., "recurve", "compound", "barebow"
     val location: String?,
-    val notes: String?
+    val notes: String?,
+    val targetType: String? = null  // TargetType.code; null treated as MINI_MC (legacy backfill)
 )

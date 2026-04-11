@@ -1,12 +1,10 @@
 package com.example.archeryapp.data.repository
 
 import com.example.archeryapp.data.local.dao.SessionDao
-import com.example.archeryapp.data.local.entity.SessionEntity
 import com.example.archeryapp.domain.model.Session
 import com.example.archeryapp.domain.repository.SessionRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
-import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
 
@@ -58,28 +56,5 @@ class SessionRepositoryImpl(
 
     override suspend fun getMostRecentSession(): Session? {
         return sessionDao.getMostRecentSession()?.toDomain()
-    }
-
-    private fun Session.toEntity(): SessionEntity {
-        return SessionEntity(
-            id = id,
-            date = date.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(),
-            distance = distance,
-            bowType = bowType,
-            location = location,
-            notes = notes
-        )
-    }
-
-    private fun SessionEntity.toDomain(): Session {
-        return Session(
-            id = id,
-            date = LocalDateTime.ofInstant(Instant.ofEpochMilli(date), ZoneId.systemDefault()),
-            distance = distance,
-            bowType = bowType,
-            location = location,
-            notes = notes,
-            ends = emptyList() // Ends loaded separately via ScoreRepository
-        )
     }
 }
