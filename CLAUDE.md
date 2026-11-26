@@ -33,6 +33,16 @@ These instructions govern ALL work in this repository. They OVERRIDE default beh
 
 4. **Modularity is mandatory.** NEVER write monolith code. Split functionality into small, focused modules. Each file = single responsibility.
 
+## Design for Change
+
+Plans across the archery projects (this app, the M5Stick firmware, and the video mocap project in `../Archery assistant`) are expected to change as work proceeds. Whenever possible, build so components can be swapped and features added without rewrites:
+
+- **Interfaces at likely-change points.** Detectors (target / arrow / pose), device connections (BLE, future wearables), scoring strategies, data sources, and feedback channels sit behind interfaces. Callers depend on the interface, not the implementation.
+- **Add, don't edit.** Prefer strategy and registry patterns and feature modules, so a new target type, detector, or device is new code rather than edits across screens and ViewModels. The video mocap work will arrive as an independent Gradle module (`:feature:mocap`, with a shared `:core:ble`). Keep the scoring core independent of it.
+- **Version anything that crosses a boundary** (Room schemas with migrations, exported files, BLE packet parsers). Prefer additive, backward-compatible changes. Readers tolerate fields they don't know. A breaking change gets a new version plus a migration or adapter.
+- **No magic numbers.** Thresholds and tunables live in settings or config objects, not inline.
+- **Cheap extension points, no speculative features.** Leave seams where change is plausible. Don't implement features or abstractions nobody has asked for.
+
 ## Documentation Updates
 
 After ANY code changes, update relevant documentation files (`achievements.md`, `architecture.md`, `DEVELOPMENT_PLAN.md`) before ending the session. Do NOT wait to be prompted.
@@ -56,7 +66,8 @@ When asked to 'diagnose', 'audit', 'review', or 'report', do NOT edit any code f
 
 ## Permissions
 
-- **Bash commands:** Run ALL freely — `./gradlew` builds, tests, git, adb, etc.
+- **Bash commands:** Run ALL freely — `./gradlew` builds, tests, adb, etc.
+- **Git: the user owns it.** NEVER run `git add`, `commit`, `push`, or create remotes. Write the code and leave commits and pushes to the user. Read-only git (`status`, `diff`, `log`) is fine.
 - **File edits:** Proceed freely for implementation work.
 - **NEVER install, uninstall, or modify ANY dependencies** (Gradle deps, version-catalog entries, plugins, KSP processors) without EXPLICITLY asking the user first. If a missing library blocks a build, report it and ask the user how to proceed.
 - **NEVER delete files or folders** without asking the user first.
